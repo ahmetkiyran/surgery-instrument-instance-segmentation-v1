@@ -1,0 +1,6 @@
+# Optional intrinsics help normalize image coordinates but do not make monocular depth metric.
+camera:
+  fx:
+  fy:
+  cx:
+  cy:

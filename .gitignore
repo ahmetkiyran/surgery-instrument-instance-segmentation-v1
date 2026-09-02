@@ -1,0 +1,32 @@
+﻿# Clinical media and generated analysis must never be committed. Generic model files are ignored;
+# two explicitly authorised, verified bundle weights are unignored below.
+*.pth
+*.onnx
+*.engine
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+.env
+outputs/
+release_assets/
+runs/
+cache/
+__pycache__/
+.pytest_cache/
+.pytest_tmp/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+logs/
+tmp/
+*.log
+*.zip
+.DS_Store
+
+# The following two verified weights are explicitly authorised by the repository owner for public distribution.
+!models/weights/
+!models/weights/health_personnel_segmentation.pt
+!models/weights/surgical_instrument_segmentation.pt

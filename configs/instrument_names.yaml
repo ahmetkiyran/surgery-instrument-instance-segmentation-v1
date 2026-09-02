@@ -1,0 +1,2 @@
+# Names shown on the processed video. Unmapped classes retain their model name.
+instrument_display_names: {}

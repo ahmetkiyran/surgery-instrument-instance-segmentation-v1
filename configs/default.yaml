@@ -1,0 +1,40 @@
+runtime:
+  output_dir: outputs
+  device: auto
+  save_audio: true
+  max_video_seconds: null
+privacy:
+  mode: gaussian
+  blur_kernel: 51
+  pixelation_factor: 14
+  mask_dilation_px: 13
+  feather_px: 9
+  persistence_frames: 8
+  max_persistence_iou: 0.15
+tracking:
+  algorithm: botsort
+  confidence: 0.35
+  iou: 0.45
+  track_buffer: 30
+  min_confirm_frames: 3
+  max_lost_seconds: 0.75
+  health:
+    confidence: 0.35
+    iou: 0.45
+  instrument:
+    confidence: 0.25
+    iou: 0.40
+analytics:
+  max_gap_seconds: 0.5
+  smoothing_window: 3
+  max_relative_jump: 0.35
+depth:
+  enabled: true
+  model_id: depth-anything/Depth-Anything-V2-Small-hf
+  depth_stride: 3
+  device: auto
+camera:
+  fx: null
+  fy: null
+  cx: null
+  cy: null

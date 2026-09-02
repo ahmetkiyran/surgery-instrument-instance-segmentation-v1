@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surgical-video-analytics"
+version = "0.1.0"
+description = "Local, privacy-first surgical video analytics with relative 3D tracking."
+requires-python = ">=3.11,<3.13"
+license = {text = "MIT"}
+authors = [{name = "Surgical Video Analytics contributors"}]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --basetemp=.pytest_tmp"
+markers = [
+  "integration: requires an authorised published model release and a permitted local smoke video",
+]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["F"]

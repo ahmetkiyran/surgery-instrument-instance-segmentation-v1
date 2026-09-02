@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "release_tag": "v1.0.0-models",
+  "release_published": false,
+  "models": {
+    "health_personnel": {
+      "filename": "health_personnel_segmentation.pt",
+      "download_url": "GITHUB_RELEASE_DOWNLOAD_URL",
+      "sha256": "57845d440436783798c17b3aca2c4e186809198248fb8d58ce2f0c5d5b27b188",
+      "task": "segment",
+      "expected_classes": [
+        "health_personel",
+        "light",
+        "monitor"
+      ]
+    },
+    "surgical_instruments": {
+      "filename": "surgical_instrument_segmentation.pt",
+      "download_url": "GITHUB_RELEASE_DOWNLOAD_URL",
+      "sha256": "39e3d5f8df8e823600962a45ad4849c373b940cdda15072ed50da60784834d52",
+      "task": "segment",
+      "expected_classes": [
+        "skin_stapler",
+        "thumb_forceps",
+        "ring_instrument",
+        "scissors"
+      ]
+    }
+  }
+}
