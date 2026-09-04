@@ -44,16 +44,19 @@ def write_tracker_config(path: Path, config: AppConfig, confidence: float | None
     return path
 
 
-def tracked_result(model, frame, tracker_path: Path, confidence: float, iou: float, device: str, use_half: bool):
+def tracked_result(model, frame, tracker_path: Path, confidence: float, iou: float, device: str, use_half: bool, image_size: int | None = None):
     """Call track with persist=True; each YOLO object owns a separate tracker lifecycle."""
-    result = model.track(
-        source=frame,
-        persist=True,
-        tracker=str(tracker_path),
-        conf=confidence,
-        iou=iou,
-        device=device,
-        half=use_half,
-        verbose=False,
-    )
+    kwargs = {
+        "source": frame,
+        "persist": True,
+        "tracker": str(tracker_path),
+        "conf": confidence,
+        "iou": iou,
+        "device": device,
+        "half": use_half,
+        "verbose": False,
+    }
+    if image_size is not None:
+        kwargs["imgsz"] = image_size
+    result = model.track(**kwargs)
     return result[0]

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Surgical Analysis Studio",
+  "version": "0.1.0",
+  "identifier": "org.surgicalvideo.analysisstudio",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Surgical Analysis Studio", "width": 1180, "height": 820, "minWidth": 940, "minHeight": 680 }],
+    "security": { "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; img-src 'self' asset: data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": { "active": true, "targets": "all" }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@surgical/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "generate": "node ./scripts/generate-types.mjs"
+  }
+}

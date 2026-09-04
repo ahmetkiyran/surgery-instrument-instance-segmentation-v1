@@ -10,6 +10,12 @@ requires-python = ">=3.11,<3.13"
 license = {text = "MIT"}
 authors = [{name = "Surgical Video Analytics contributors"}]
 
+[project.scripts]
+surgery-analyze = "surgical_pipeline.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["surgical_pipeline*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --basetemp=.pytest_tmp"

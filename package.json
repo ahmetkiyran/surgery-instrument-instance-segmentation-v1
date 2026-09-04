@@ -1,0 +1,28 @@
+{
+  "name": "surgical-video-analytics-ui",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/desktop",
+    "apps/mobile",
+    "packages/api-client"
+  ],
+  "scripts": {
+    "dev:desktop": "npm run dev --workspace=@surgical/desktop",
+    "build:desktop": "npm run build --workspace=@surgical/desktop",
+    "typecheck:desktop": "npm run typecheck --workspace=@surgical/desktop",
+    "start:mobile": "npm run start --workspace=@surgical/mobile",
+    "typecheck:mobile": "npm run typecheck --workspace=@surgical/mobile",
+    "generate:api-client": "npm run generate --workspace=@surgical/api-client",
+    "typecheck:api-client": "npm run typecheck --workspace=@surgical/api-client"
+  },
+  "overrides": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}

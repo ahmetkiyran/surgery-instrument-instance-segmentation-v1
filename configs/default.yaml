@@ -11,6 +11,7 @@ privacy:
   feather_px: 9
   persistence_frames: 8
   max_persistence_iou: 0.15
+  bbox_privacy_fallback: true
 tracking:
   algorithm: botsort
   confidence: 0.35
@@ -26,6 +27,7 @@ tracking:
     iou: 0.40
 analytics:
   max_gap_seconds: 0.5
+  minimum_interval_seconds: 0.0
   smoothing_window: 3
   max_relative_jump: 0.35
 depth:
@@ -33,6 +35,21 @@ depth:
   model_id: depth-anything/Depth-Anything-V2-Small-hf
   depth_stride: 3
   device: auto
+model:
+  health_model_path: null
+  instrument_model_path: null
+  pose_model_path: null
+  health_class_name: null
+  health_class_id: null
+  image_size: null
+  fp16: true
+  allow_cpu_fallback: false
+cli:
+  privacy_mode: skeleton-only
+reproducibility:
+  random_seed: 0
+  log_level: INFO
+  output_codec: mp4v
 camera:
   fx: null
   fy: null

@@ -8,20 +8,76 @@ from pathlib import Path
 
 import pandas as pd
 
-from .schemas import TrackPoint, UsageInterval
+from .schemas import Detection, TrackPoint, UsageInterval
 from .utils import write_json
 
 
-def write_csvs(run_dir: Path, track_points: list[TrackPoint], health_counts: list[dict], intervals: list[UsageInterval]) -> tuple[Path, Path, Path]:
-    tracks = run_dir / "instrument_tracks.csv"; health = run_dir / "health_person_count.csv"; usage = run_dir / "usage_intervals.csv"
-    pd.DataFrame([point.row() for point in track_points]).to_csv(tracks, index=False)
-    pd.DataFrame(health_counts).to_csv(health, index=False)
-    pd.DataFrame([interval.row() for interval in intervals]).to_csv(usage, index=False)
-    return tracks, health, usage
+DETECTION_COLUMNS = [
+    "schema_version", "frame_index", "timestamp_s", "track_id", "class_id", "class_name", "confidence",
+    "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2", "mask_area_px", "centroid_x", "centroid_y",
+    "centroid_source", "mask_quality", "tracking_state",
+]
+TRACK_COLUMNS = [
+    "schema_version", "frame_index", "timestamp_s", "track_id", "class_name", "confidence", "x", "y", "depth",
+    "relative_x", "relative_y", "relative_depth", "depth_valid", "centroid_source", "depth_source", "depth_interpolated",
+]
+HEALTH_COLUMNS = ["schema_version", "frame_index", "timestamp_s", "active_health_person_count"]
+INTERVAL_COLUMNS = ["schema_version", "class_name", "track_id", "start_s", "end_s", "duration_s", "source"]
+USAGE_SUMMARY_COLUMNS = [
+    "schema_version", "class_name", "first_seen_seconds", "last_seen_seconds", "raw_active_seconds", "merged_active_seconds",
+    "union_usage_seconds", "instance_time_seconds", "usage_interval_count", "average_confidence",
+    "maximum_concurrent_instances", "valid_track_count", "relative_2d_motion", "relative_3d_motion", "depth_validity_ratio",
+]
+
+
+def _write_csv(path: Path, rows: list[dict], columns: list[str]) -> Path:
+    pd.DataFrame(rows, columns=columns).to_csv(path, index=False)
+    return path
+
+
+def _detection_row(detection: Detection) -> dict:
+    centroid = detection.centroid()
+    bbox = detection.bbox_xyxy or (None, None, None, None)
+    return {
+        "schema_version": "1.0", "frame_index": detection.frame_index, "timestamp_s": detection.timestamp_s,
+        "track_id": detection.track_id, "class_id": detection.class_id, "class_name": detection.class_name,
+        "confidence": detection.confidence, "bbox_x1": bbox[0], "bbox_y1": bbox[1], "bbox_x2": bbox[2], "bbox_y2": bbox[3],
+        "mask_area_px": int((detection.mask > 0).sum()), "centroid_x": centroid[0] if centroid else None,
+        "centroid_y": centroid[1] if centroid else None, "centroid_source": detection.centroid_source(), "mask_quality": detection.mask_quality, "tracking_state": detection.tracking_state,
+    }
+
+
+def write_csvs(
+    run_dir: Path,
+    detections: list[Detection],
+    track_points: list[TrackPoint],
+    health_counts: list[dict],
+    intervals: list[UsageInterval],
+    instrument_summary: dict[str, dict],
+) -> tuple[Path, ...]:
+    """Write versioned, stable CSV contracts and legacy UI aliases."""
+    detection_rows = [_detection_row(item) for item in detections]
+    point_rows = [{"schema_version": "1.0", **point.row()} for point in track_points]
+    health_rows = [{"schema_version": "1.0", **row} for row in health_counts]
+    interval_rows = [{"schema_version": "1.0", **interval.row()} for interval in intervals]
+    usage_rows = [{"schema_version": "1.0", "class_name": class_name, **{key: values.get(key) for key in USAGE_SUMMARY_COLUMNS if key not in {"schema_version", "class_name"}}} for class_name, values in sorted(instrument_summary.items())]
+    detections_path = _write_csv(run_dir / "detections.csv", detection_rows, DETECTION_COLUMNS)
+    tracks_path = _write_csv(run_dir / "tracks.csv", point_rows, TRACK_COLUMNS)
+    health_path = _write_csv(run_dir / "health_person_count.csv", health_rows, HEALTH_COLUMNS)
+    intervals_path = _write_csv(run_dir / "usage_intervals.csv", interval_rows, INTERVAL_COLUMNS)
+    usage_summary_path = _write_csv(run_dir / "usage_summary.csv", usage_rows, USAGE_SUMMARY_COLUMNS)
+    trajectories_path = _write_csv(run_dir / "trajectories_3d.csv", point_rows, TRACK_COLUMNS)
+    # Existing Gradio releases expect these names; retain them as data-equivalent files.
+    legacy_tracks = _write_csv(run_dir / "instrument_tracks.csv", point_rows, TRACK_COLUMNS)
+    return detections_path, tracks_path, health_path, intervals_path, usage_summary_path, trajectories_path, legacy_tracks
 
 
 def write_summary(run_dir: Path, summary: dict) -> Path:
-    path = run_dir / "summary.json"; write_json(path, summary); return path
+    """Write the versioned analysis contract and a legacy summary alias for the UI."""
+    analysis_path = run_dir / "analysis.json"
+    write_json(analysis_path, summary)
+    write_json(run_dir / "summary.json", summary)
+    return analysis_path
 
 
 def write_html_report(run_dir: Path, summary: dict) -> Path:

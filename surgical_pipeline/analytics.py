@@ -20,7 +20,12 @@ def confirmed_health_count(history: dict[int, list[float]], current_ids: set[int
     return active
 
 
-def usage_intervals(detections: list[Detection], max_gap_seconds: float, frame_step_s: float) -> list[UsageInterval]:
+def usage_intervals(
+    detections: list[Detection],
+    max_gap_seconds: float,
+    frame_step_s: float,
+    minimum_interval_seconds: float = 0.0,
+) -> list[UsageInterval]:
     """Bridge short misses within one track; each interval has a timestamp-based duration."""
     grouped: dict[tuple[str, int], list[float]] = defaultdict(list)
     for detection in detections:
@@ -35,11 +40,15 @@ def usage_intervals(detections: list[Detection], max_gap_seconds: float, frame_s
         for timestamp in times[1:]:
             if timestamp - previous > max_gap_seconds + frame_step_s:
                 end = round(previous + frame_step_s, 9)
-                intervals.append(UsageInterval(class_name, track_id, start, end, round(max(0.0, end - start), 9)))
+                duration = round(max(0.0, end - start), 9)
+                if duration >= minimum_interval_seconds:
+                    intervals.append(UsageInterval(class_name, track_id, start, end, duration))
                 start = timestamp
             previous = timestamp
         end = round(previous + frame_step_s, 9)
-        intervals.append(UsageInterval(class_name, track_id, start, end, round(max(0.0, end - start), 9)))
+        duration = round(max(0.0, end - start), 9)
+        if duration >= minimum_interval_seconds:
+            intervals.append(UsageInterval(class_name, track_id, start, end, duration))
     return sorted(intervals, key=lambda interval: (interval.class_name, interval.track_id, interval.start_s))
 
 
@@ -58,8 +67,15 @@ def union_duration(intervals: list[UsageInterval]) -> float:
     return total + end - start
 
 
-def build_instrument_summary(detections: list[Detection], points: list[TrackPoint], max_gap_seconds: float, frame_step_s: float, max_jump: float) -> tuple[dict[str, dict], list[UsageInterval]]:
-    intervals = usage_intervals(detections, max_gap_seconds, frame_step_s)
+def build_instrument_summary(
+    detections: list[Detection],
+    points: list[TrackPoint],
+    max_gap_seconds: float,
+    frame_step_s: float,
+    max_jump: float,
+    minimum_interval_seconds: float = 0.0,
+) -> tuple[dict[str, dict], list[UsageInterval]]:
+    intervals = usage_intervals(detections, max_gap_seconds, frame_step_s, minimum_interval_seconds)
     lengths = trajectory_lengths(points, max_jump)
     by_class_detections: dict[str, list[Detection]] = defaultdict(list)
     for detection in detections:
@@ -69,14 +85,25 @@ def build_instrument_summary(detections: list[Detection], points: list[TrackPoin
         class_intervals = [interval for interval in intervals if interval.class_name == class_name]
         track_ids = sorted({detection.track_id for detection in class_detections if detection.track_id is not None})
         track_metrics = [lengths.get((class_name, track_id), {}) for track_id in track_ids]
+        timestamps: dict[float, set[int]] = defaultdict(set)
+        for detection in class_detections:
+            if detection.track_id is not None:
+                timestamps[detection.timestamp_s].add(detection.track_id)
+        raw_active = len(timestamps) * frame_step_s
+        merged = union_duration(class_intervals)
         result[class_name] = {
-            "union_usage_seconds": union_duration(class_intervals),
+            "raw_active_seconds": raw_active,
+            "merged_active_seconds": merged,
+            "union_usage_seconds": merged,
             "instance_time_seconds": sum(interval.duration_s for interval in class_intervals),
             "first_seen_seconds": min(detection.timestamp_s for detection in class_detections),
             "last_seen_seconds": max(detection.timestamp_s for detection in class_detections),
             "track_count": len(track_ids),
+            "valid_track_count": len(track_ids),
             "usage_interval_count": len(class_intervals),
+            "usage_intervals": [{"track_id": item.track_id, "start_s": item.start_s, "end_s": item.end_s, "duration_s": item.duration_s} for item in class_intervals],
             "average_confidence": mean(detection.confidence for detection in class_detections),
+            "maximum_concurrent_instances": max((len(ids) for ids in timestamps.values()), default=0),
             "relative_2d_motion": sum(float(metric.get("relative_2d_motion", 0.0)) for metric in track_metrics),
             "relative_3d_motion": sum(float(metric.get("relative_3d_motion", 0.0)) for metric in track_metrics),
             "depth_validity_ratio": mean([float(metric.get("depth_validity_ratio", 0.0)) for metric in track_metrics]) if track_metrics else 0.0,

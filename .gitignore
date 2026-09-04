@@ -22,6 +22,13 @@ __pycache__/
 venv/
 logs/
 tmp/
+test_reports/
+.surgical_server/
+apps/desktop/src-tauri/target/
+apps/desktop/dist/
+apps/mobile/.expo/
+apps/mobile/dist/
+node_modules/
 *.log
 *.zip
 .DS_Store

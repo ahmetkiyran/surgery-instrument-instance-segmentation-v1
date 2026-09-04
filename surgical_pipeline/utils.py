@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import shutil
 from datetime import UTC, datetime
@@ -14,10 +15,10 @@ from typing import Any
 RUN_NAME_RE = re.compile(r"^run_\d{8}_\d{6}(?:_\d+)?$")
 
 
-def configure_logging(log_path: Path | None = None) -> logging.Logger:
+def configure_logging(log_path: Path | None = None, level: str = "INFO") -> logging.Logger:
     """Return the package logger without logging private input paths to reports."""
     logger = logging.getLogger("surgical_pipeline")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
     if not logger.handlers:
         stream = logging.StreamHandler()
         stream.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -60,8 +61,26 @@ def safe_run_dir(output_root: Path) -> Path:
             index += 1
 
 
+def json_safe(value: Any) -> Any:
+    """Convert numeric/container values to strict JSON without NaN or Infinity."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [json_safe(item) for item in value]
+    if hasattr(value, "item"):
+        try:
+            return json_safe(value.item())
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
 def write_json(path: Path, payload: Any) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    path.write_text(json.dumps(json_safe(payload), ensure_ascii=False, indent=2, default=str, allow_nan=False), encoding="utf-8")
 
 
 def tool_available(name: str) -> bool:
@@ -95,8 +114,9 @@ def hardware_summary() -> dict[str, str | bool]:
         return {
             "device": "cuda:0" if cuda else "cpu",
             "cuda_available": cuda,
+            "cuda_runtime": str(torch.version.cuda or "unavailable"),
             "gpu": torch.cuda.get_device_name(0) if cuda else "CPU",
             "torch": str(torch.__version__),
         }
     except Exception:
-        return {"device": "cpu", "cuda_available": False, "gpu": "CPU", "torch": "unavailable"}
+        return {"device": "cpu", "cuda_available": False, "cuda_runtime": "unavailable", "gpu": "CPU", "torch": "unavailable"}

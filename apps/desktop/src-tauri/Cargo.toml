@@ -1,0 +1,16 @@
+[package]
+name = "surgical-analysis-studio"
+version = "0.1.0"
+description = "Local privacy-first surgical analysis desktop client"
+authors = ["Surgical Video Analytics contributors"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }

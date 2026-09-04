@@ -10,6 +10,8 @@ from .schemas import Detection, TrackPoint
 
 
 def robust_mask_depth(depth_map: np.ndarray, mask: np.ndarray) -> float | None:
+    if depth_map.ndim != 2 or mask.shape != depth_map.shape:
+        return None
     values = depth_map[(mask > 0) & np.isfinite(depth_map)]
     if values.size < 3:
         return None
@@ -18,14 +20,48 @@ def robust_mask_depth(depth_map: np.ndarray, mask: np.ndarray) -> float | None:
     return float(np.median(cleaned)) if cleaned.size else None
 
 
-def point_from_detection(detection: Detection, depth_map: np.ndarray | None, frame_width: int, frame_height: int) -> TrackPoint | None:
+def _fallback_depth(depth_map: np.ndarray, detection: Detection, x: float, y: float) -> float | None:
+    """Use a small centre patch only when a segmentation mask is unavailable."""
+    height, width = depth_map.shape[:2]
+    if detection.bbox_xyxy is not None:
+        x1, y1, x2, y2 = detection.bbox_xyxy
+        half = max(2, min(12, int(min(abs(x2 - x1), abs(y2 - y1)) / 4)))
+    else:
+        half = 3
+    left, right = max(0, int(round(x)) - half), min(width, int(round(x)) + half + 1)
+    top, bottom = max(0, int(round(y)) - half), min(height, int(round(y)) + half + 1)
+    patch = depth_map[top:bottom, left:right]
+    finite = patch[np.isfinite(patch)]
+    if finite.size < 3:
+        return None
+    low, high = np.percentile(finite, [5, 95])
+    cleaned = finite[(finite >= low) & (finite <= high)]
+    return float(np.median(cleaned)) if cleaned.size else None
+
+
+def point_from_detection(
+    detection: Detection,
+    depth_map: np.ndarray | None,
+    frame_width: int,
+    frame_height: int,
+    depth_interpolated: bool = False,
+) -> TrackPoint | None:
     if detection.track_id is None:
         return None
     centroid = detection.centroid()
     if centroid is None:
         return None
     x, y = centroid
-    depth = robust_mask_depth(depth_map, detection.mask) if depth_map is not None else None
+    centroid_source = detection.centroid_source()
+    depth_source = "unavailable"
+    depth = None
+    if depth_map is not None:
+        if np.any(detection.mask > 0):
+            depth = robust_mask_depth(depth_map, detection.mask)
+            depth_source = "mask_median" if depth is not None else "mask_invalid"
+        else:
+            depth = _fallback_depth(depth_map, detection, x, y)
+            depth_source = "centre_patch_fallback" if depth is not None else "fallback_invalid"
     return TrackPoint(
         frame_index=detection.frame_index,
         timestamp_s=detection.timestamp_s,
@@ -35,10 +71,15 @@ def point_from_detection(detection: Detection, depth_map: np.ndarray | None, fra
         x=x,
         y=y,
         depth=depth,
-        relative_x=x / max(frame_width - 1, 1),
-        relative_y=y / max(frame_height - 1, 1),
+        # x/y are image-centre-relative coordinates in [-1, 1]; z remains
+        # normalised monocular depth and is never metric distance.
+        relative_x=(x - (frame_width - 1) / 2.0) / max((frame_width - 1) / 2.0, 1.0),
+        relative_y=(y - (frame_height - 1) / 2.0) / max((frame_height - 1) / 2.0, 1.0),
         relative_depth=depth,
         depth_valid=depth is not None,
+        centroid_source=centroid_source,
+        depth_source=depth_source,
+        depth_interpolated=depth_interpolated,
     )
 
 
@@ -80,5 +121,18 @@ def trajectory_lengths(points: list[TrackPoint], max_jump: float) -> dict[tuple[
                         distance_3d += delta_3d
                 valid_segments += 1
         valid_depth = sum(point.depth_valid for point in track_points)
-        result[key] = {"relative_2d_motion": distance_2d, "relative_3d_motion": distance_3d, "sample_count": len(track_points), "depth_validity_ratio": valid_depth / len(track_points) if track_points else 0.0, "valid_segments": valid_segments}
+        complete = [point for point in track_points if None not in (point.relative_x, point.relative_y, point.relative_depth)]
+        result[key] = {
+            "relative_2d_motion": distance_2d,
+            "relative_3d_motion": distance_3d,
+            "total_relative_3d_path_length": distance_3d,
+            "sample_count": len(track_points),
+            "valid_3d_point_count": len(complete),
+            "missing_depth_ratio": 1.0 - (valid_depth / len(track_points) if track_points else 0.0),
+            "depth_validity_ratio": valid_depth / len(track_points) if track_points else 0.0,
+            "valid_segments": valid_segments,
+            "relative_3d_start": [complete[0].relative_x, complete[0].relative_y, complete[0].relative_depth] if complete else None,
+            "relative_3d_end": [complete[-1].relative_x, complete[-1].relative_y, complete[-1].relative_depth] if complete else None,
+            "smoothing": "causal_rolling_median",
+        }
     return result

@@ -9,6 +9,9 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 
+PIPELINE_SCHEMA_VERSION = "1.0"
+
+
 @dataclass(slots=True)
 class Detection:
     class_id: int
@@ -18,13 +21,22 @@ class Detection:
     mask: np.ndarray
     frame_index: int
     timestamp_s: float
+    bbox_xyxy: tuple[float, float, float, float] | None = None
+    mask_quality: str = "valid"
+    tracking_state: str = "unassigned"
 
     def centroid(self) -> tuple[float, float] | None:
         points = np.argwhere(self.mask > 0)
-        if points.size == 0:
-            return None
-        y, x = np.median(points, axis=0)
-        return float(x), float(y)
+        if points.size:
+            y, x = np.median(points, axis=0)
+            return float(x), float(y)
+        if self.bbox_xyxy is not None:
+            x1, y1, x2, y2 = self.bbox_xyxy
+            return (float(x1 + x2) / 2.0, float(y1 + y2) / 2.0)
+        return None
+
+    def centroid_source(self) -> str:
+        return "mask_centroid" if np.any(self.mask > 0) else "bbox_center" if self.bbox_xyxy is not None else "unavailable"
 
 
 @dataclass(slots=True)
@@ -41,6 +53,9 @@ class TrackPoint:
     relative_y: float | None
     relative_depth: float | None
     depth_valid: bool
+    centroid_source: str = "mask_centroid"
+    depth_source: str = "mask_median"
+    depth_interpolated: bool = False
 
     def row(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,6 +68,7 @@ class UsageInterval:
     start_s: float
     end_s: float
     duration_s: float
+    source: str = "track"
 
     def row(self) -> dict[str, Any]:
         return asdict(self)
@@ -89,4 +105,27 @@ class SummarySchema(BaseModel):
     instrument_usage: dict[str, Any]
     relative_3d_note: str
     processing: dict[str, Any]
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RunManifestSchema(BaseModel):
+    """Strict envelope for a run lifecycle record; details may evolve independently."""
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str
+    pipeline_version: str
+    run_id: str
+    status: str
+    started_at_utc: str
+    finished_at_utc: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QualityReportSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str
+    privacy: dict[str, Any]
+    depth: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
