@@ -36,7 +36,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState("Özet");
 
   const client = useMemo(() => new SurgicalApiClient({ baseUrl, token: token || undefined }), [baseUrl, token]);
-  const animation: AnimationState = error ? "error" : job?.status === "completed" ? "completed" : job && !terminal.has(job.status) ? "analyzing" : connected ? "idle" : "checking_models";
+  const animation: AnimationState = error ? "error" : job?.status === "completed" ? "completed" : job?.status === "finalizing" ? "finalizing" : job && !terminal.has(job.status) ? "analyzing" : connected ? "idle" : "checking_models";
 
   const refreshSystem = useCallback(async () => {
     try {

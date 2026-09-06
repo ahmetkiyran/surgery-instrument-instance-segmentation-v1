@@ -292,7 +292,16 @@ class AnalysisPipeline:
 
             state.track_points = smooth_points(state.track_points, self.config.smoothing_window)
             frame_step = 1.0 / reader.metadata.fps
-            instrument_summary, intervals = build_instrument_summary(all_instruments, state.track_points, self.config.max_gap_seconds, frame_step, self.config.max_relative_jump, self.config.minimum_interval_seconds)
+            instrument_summary, intervals = build_instrument_summary(
+                all_instruments,
+                state.track_points,
+                self.config.max_gap_seconds,
+                frame_step,
+                self.config.max_relative_jump,
+                self.config.minimum_interval_seconds,
+                processed / reader.metadata.fps,
+                instrument_info.names.values(),
+            )
             elapsed = time.perf_counter() - started
             writer.close()
             warnings = writer.finalise(input_video, run_dir / "processed_video.mp4", self.config.save_audio)

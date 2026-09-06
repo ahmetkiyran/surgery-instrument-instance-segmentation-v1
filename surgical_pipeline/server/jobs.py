@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 import threading
 import time
@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .artifacts import Artifact, collect_artifacts
 from .config import ServerSettings
-from .schemas import ArtifactResponse, JobCreateRequest, JobResponse
+from .schemas import JobCreateRequest, JobResponse
 from .security import validate_video_path
 
 

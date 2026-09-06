@@ -12,7 +12,7 @@ import time
 
 import pandas as pd
 
-from .analytics import confirmed_health_count
+from .analytics import build_instrument_summary, confirmed_health_count, health_statistics
 from .config import AppConfig
 from .depth import DepthEstimator
 from .detections import extract_detections, filter_class
@@ -120,6 +120,8 @@ def run_pose_pilot(
     pose_rows: list[dict] = []
     keypoint_points: list[PosePoint4D] = []
     instrument_rows: list[dict] = []
+    all_instruments = []
+    health_count_rows: list[dict[str, float | int]] = []
     processed = 0
     started = time.perf_counter()
     manifest_path = run_dir / "run_manifest.json"
@@ -133,9 +135,11 @@ def run_pose_pilot(
             instrument_result = tracked_result(instrument_model, frame, instrument_tracker_file, active_config.instrument_confidence, active_config.instrument_iou, device, use_half, active_config.image_size)
             health = health_fallback.assign(filter_class(extract_detections(health_result, health_info.names, frame.shape[:2], frame_index, timestamp_s), health_id), frame_index)
             instruments = instrument_fallback.assign(extract_detections(instrument_result, instrument_info.names, frame.shape[:2], frame_index, timestamp_s), frame_index)
+            all_instruments.extend(instruments)
             poses = pose_tracker.update(match_health_personnel(pose_estimator.estimate(frame, frame_index, timestamp_s), health, keypoint_confidence), frame_index, keypoint_confidence)
             active_ids = {item.track_id for item in health if item.track_id is not None}
             personnel_count = confirmed_health_count(health_history, active_ids, timestamp_s, active_config.min_confirm_frames, active_config.max_lost_seconds)
+            health_count_rows.append({"frame_index": frame_index, "timestamp_s": timestamp_s, "active_health_person_count": personnel_count})
             depth_map = None
             if active_config.depth_enabled and (poses or instruments):
                 depth_map, _ = depth.cached_or_estimate(frame, frame_index, active_config.depth_stride)
@@ -168,6 +172,48 @@ def run_pose_pilot(
         reader.close()
     writer.close()
     warnings = writer.finalise(input_video, run_dir / "skeleton_tracking.mp4", keep_audio=False)
+    processed_duration = processed / reader.metadata.fps
+    instrument_visibility, visible_intervals = build_instrument_summary(
+        all_instruments,
+        [],
+        active_config.max_gap_seconds,
+        1.0 / reader.metadata.fps,
+        active_config.max_relative_jump,
+        active_config.minimum_interval_seconds,
+        processed_duration,
+        instrument_info.names.values(),
+    )
+    visibility_path = run_dir / "instrument_visibility_summary.json"
+    write_json(
+        visibility_path,
+        {
+            "schema_version": "1.0",
+            "processed_duration_seconds": processed_duration,
+            "processed_frame_count": processed,
+            "fps": reader.metadata.fps,
+            "health_person_statistics": health_statistics(health_count_rows),
+            "instruments": instrument_visibility,
+        },
+    )
+    visible_path = _write_csv(
+        run_dir / "usage_intervals.csv",
+        [{"schema_version": "1.0", **item.row()} for item in visible_intervals],
+        ["schema_version", "class_name", "track_id", "start_s", "end_s", "duration_s", "source"],
+    )
+    absent_path = _write_csv(
+        run_dir / "not_visible_intervals.csv",
+        [
+            {"schema_version": "1.0", "class_name": class_name, **interval, "source": "visible-table-complement"}
+            for class_name, values in sorted(instrument_visibility.items())
+            for interval in values.get("not_visible_intervals", [])
+        ],
+        ["schema_version", "class_name", "start_s", "end_s", "duration_s", "source"],
+    )
+    health_counts_path = _write_csv(
+        run_dir / "health_person_count.csv",
+        [{"schema_version": "1.0", **row} for row in health_count_rows],
+        ["schema_version", "frame_index", "timestamp_s", "active_health_person_count"],
+    )
     quality.track_loss_count = pose_tracker.short_loss_count
     quality.id_switch_estimate = pose_tracker.id_switch_estimate
     keypoint_points = smooth_pose_points(keypoint_points, active_config.smoothing_window)
@@ -184,6 +230,7 @@ def run_pose_pilot(
         "source_video": {"filename": scrub_filename(input_video), "sha256": sha256_file(input_video)},
         "models": {"health": health_info.safe_dict(), "instrument": instrument_info.safe_dict(), "pose": pose_info.safe_dict(), "health_class_id": health_id},
         "processed_frame_count": processed, "max_seconds": max_seconds, "audio_copied": False,
+        "instrument_visibility_summary": visibility_path.name,
         "relative_4d_definition": "(x_rel, y_rel, z_rel, t): image-centre-relative x/y, normalized monocular z, and video timestamp. It is not metric 4D reconstruction.",
         "depth_status": "enabled_relative" if active_config.depth_enabled else "not_produced",
         "smoothing": {"method": "causal_rolling_median", "window": active_config.smoothing_window},
@@ -197,5 +244,5 @@ def run_pose_pilot(
     privacy = audit_skeleton_artifacts(run_dir, run_dir / "skeleton_tracking.mp4", [quality_path, manifest_path])
     write_json(privacy_path, privacy)
     logger.info("Pose pilot complete: %s frames; source RGB and audio were not copied.", processed)
-    files = [run_dir / "skeleton_tracking.mp4", tracks_path, keypoints_path, instruments_path, quality_path, privacy_path, manifest_path, run_dir / "pipeline.log", *extra_files]
+    files = [run_dir / "skeleton_tracking.mp4", tracks_path, keypoints_path, instruments_path, health_counts_path, visible_path, absent_path, visibility_path, quality_path, privacy_path, manifest_path, run_dir / "pipeline.log", *extra_files]
     return PosePilotResult(run_dir, run_dir / "skeleton_tracking.mp4", quality_path, privacy_path, manifest_path, files)

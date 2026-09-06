@@ -4,10 +4,11 @@ import idle from "../assets/lottie/idle.json";
 import checkingModels from "../assets/lottie/checking_models.json";
 import uploading from "../assets/lottie/uploading.json";
 import analyzing from "../assets/lottie/analyzing.json";
+import finalizing from "../assets/lottie/finalizing.json";
 import completed from "../assets/lottie/completed.json";
 import error from "../assets/lottie/error.json";
 
-const animations = { idle, checking_models: checkingModels, uploading, analyzing, completed, error };
+const animations = { idle, checking_models: checkingModels, uploading, analyzing, finalizing, completed, error };
 export type AnimationState = keyof typeof animations;
 
 export function StatusAnimation({ state }: { state: AnimationState }) {
@@ -20,5 +21,5 @@ export function StatusAnimation({ state }: { state: AnimationState }) {
     return () => media.removeEventListener("change", update);
   }, []);
   if (reduceMotion) return <span className="static-status-icon" aria-label={state}>●</span>;
-  return <Lottie className="status-animation" src={animations[state]} autoplay loop={state === "analyzing" || state === "checking_models" || state === "uploading"} aria-label={state} />;
+  return <Lottie className="status-animation" src={animations[state]} autoplay loop={state === "analyzing" || state === "finalizing" || state === "checking_models" || state === "uploading"} aria-label={state} />;
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from statistics import mean
 
 from .coordinates_3d import trajectory_lengths
@@ -67,6 +68,30 @@ def union_duration(intervals: list[UsageInterval]) -> float:
     return total + end - start
 
 
+def not_visible_intervals(intervals: list[UsageInterval], duration_s: float) -> list[dict[str, float]]:
+    """Return the complement of visible class intervals over the processed timeline."""
+    duration = max(0.0, float(duration_s))
+    if duration == 0:
+        return []
+    merged: list[tuple[float, float]] = []
+    for interval in sorted(intervals, key=lambda item: item.start_s):
+        start = min(duration, max(0.0, interval.start_s))
+        end = min(duration, max(start, interval.end_s))
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    result: list[dict[str, float]] = []
+    cursor = 0.0
+    for start, end in merged:
+        if start > cursor:
+            result.append({"start_s": cursor, "end_s": start, "duration_s": start - cursor})
+        cursor = max(cursor, end)
+    if cursor < duration:
+        result.append({"start_s": cursor, "end_s": duration, "duration_s": duration - cursor})
+    return result
+
+
 def build_instrument_summary(
     detections: list[Detection],
     points: list[TrackPoint],
@@ -74,6 +99,8 @@ def build_instrument_summary(
     frame_step_s: float,
     max_jump: float,
     minimum_interval_seconds: float = 0.0,
+    video_duration_s: float | None = None,
+    expected_classes: Iterable[str] | None = None,
 ) -> tuple[dict[str, dict], list[UsageInterval]]:
     intervals = usage_intervals(detections, max_gap_seconds, frame_step_s, minimum_interval_seconds)
     lengths = trajectory_lengths(points, max_jump)
@@ -81,8 +108,12 @@ def build_instrument_summary(
     for detection in detections:
         by_class_detections[detection.class_name].append(detection)
     result: dict[str, dict] = {}
-    for class_name, class_detections in sorted(by_class_detections.items()):
+    class_names = set(by_class_detections)
+    class_names.update(str(name) for name in (expected_classes or ()))
+    for class_name in sorted(class_names):
+        class_detections = by_class_detections[class_name]
         class_intervals = [interval for interval in intervals if interval.class_name == class_name]
+        absent = not_visible_intervals(class_intervals, video_duration_s) if video_duration_s is not None else []
         track_ids = sorted({detection.track_id for detection in class_detections if detection.track_id is not None})
         track_metrics = [lengths.get((class_name, track_id), {}) for track_id in track_ids]
         timestamps: dict[float, set[int]] = defaultdict(set)
@@ -96,13 +127,15 @@ def build_instrument_summary(
             "merged_active_seconds": merged,
             "union_usage_seconds": merged,
             "instance_time_seconds": sum(interval.duration_s for interval in class_intervals),
-            "first_seen_seconds": min(detection.timestamp_s for detection in class_detections),
-            "last_seen_seconds": max(detection.timestamp_s for detection in class_detections),
+            "first_seen_seconds": min((detection.timestamp_s for detection in class_detections), default=None),
+            "last_seen_seconds": max((detection.timestamp_s for detection in class_detections), default=None),
             "track_count": len(track_ids),
             "valid_track_count": len(track_ids),
             "usage_interval_count": len(class_intervals),
             "usage_intervals": [{"track_id": item.track_id, "start_s": item.start_s, "end_s": item.end_s, "duration_s": item.duration_s} for item in class_intervals],
-            "average_confidence": mean(detection.confidence for detection in class_detections),
+            "not_visible_seconds": sum(item["duration_s"] for item in absent),
+            "not_visible_intervals": absent,
+            "average_confidence": mean(detection.confidence for detection in class_detections) if class_detections else 0.0,
             "maximum_concurrent_instances": max((len(ids) for ids in timestamps.values()), default=0),
             "relative_2d_motion": sum(float(metric.get("relative_2d_motion", 0.0)) for metric in track_metrics),
             "relative_3d_motion": sum(float(metric.get("relative_3d_motion", 0.0)) for metric in track_metrics),

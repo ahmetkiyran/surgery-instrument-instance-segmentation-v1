@@ -25,7 +25,7 @@ HEALTH_COLUMNS = ["schema_version", "frame_index", "timestamp_s", "active_health
 INTERVAL_COLUMNS = ["schema_version", "class_name", "track_id", "start_s", "end_s", "duration_s", "source"]
 USAGE_SUMMARY_COLUMNS = [
     "schema_version", "class_name", "first_seen_seconds", "last_seen_seconds", "raw_active_seconds", "merged_active_seconds",
-    "union_usage_seconds", "instance_time_seconds", "usage_interval_count", "average_confidence",
+    "union_usage_seconds", "instance_time_seconds", "not_visible_seconds", "usage_interval_count", "average_confidence",
     "maximum_concurrent_instances", "valid_track_count", "relative_2d_motion", "relative_3d_motion", "depth_validity_ratio",
 ]
 
@@ -66,10 +66,20 @@ def write_csvs(
     health_path = _write_csv(run_dir / "health_person_count.csv", health_rows, HEALTH_COLUMNS)
     intervals_path = _write_csv(run_dir / "usage_intervals.csv", interval_rows, INTERVAL_COLUMNS)
     usage_summary_path = _write_csv(run_dir / "usage_summary.csv", usage_rows, USAGE_SUMMARY_COLUMNS)
+    absent_rows = [
+        {"schema_version": "1.0", "class_name": class_name, **interval, "source": "visible-table-complement"}
+        for class_name, values in sorted(instrument_summary.items())
+        for interval in values.get("not_visible_intervals", [])
+    ]
+    absent_path = _write_csv(
+        run_dir / "not_visible_intervals.csv",
+        absent_rows,
+        ["schema_version", "class_name", "start_s", "end_s", "duration_s", "source"],
+    )
     trajectories_path = _write_csv(run_dir / "trajectories_3d.csv", point_rows, TRACK_COLUMNS)
     # Existing Gradio releases expect these names; retain them as data-equivalent files.
     legacy_tracks = _write_csv(run_dir / "instrument_tracks.csv", point_rows, TRACK_COLUMNS)
-    return detections_path, tracks_path, health_path, intervals_path, usage_summary_path, trajectories_path, legacy_tracks
+    return detections_path, tracks_path, health_path, intervals_path, absent_path, usage_summary_path, trajectories_path, legacy_tracks
 
 
 def write_summary(run_dir: Path, summary: dict) -> Path:

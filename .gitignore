@@ -8,6 +8,7 @@
 *.mov
 *.mkv
 *.webm
+*.m4v
 .env
 outputs/
 release_assets/
@@ -22,6 +23,7 @@ __pycache__/
 venv/
 logs/
 tmp/
+.tmp/
 test_reports/
 .surgical_server/
 apps/desktop/src-tauri/target/

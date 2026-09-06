@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import json
 import threading
@@ -18,18 +19,39 @@ from surgical_pipeline.pipeline import AnalysisCancelled, AnalysisPipeline
 ROOT = Path(__file__).resolve().parent
 RUN_LOCK = threading.Lock()
 CANCEL_EVENT = threading.Event()
+STATUS_ASSET_ROOT = ROOT / "apps" / "gradio" / "assets" / "status"
+STATUS_LABELS = {
+    "idle": "Video bekleniyor",
+    "checking_models": "Modeller yükleniyor",
+    "uploading": "Video hazırlanıyor",
+    "analyzing": "Analiz sürüyor",
+    "finalizing": "Rapor hazırlanıyor",
+    "completed": "Analiz tamamlandı",
+    "error": "Hata oluştu",
+}
+
+
+def _status_html(state: str) -> str:
+    """Return a self-contained local status animation with a text fallback."""
+    label = STATUS_LABELS.get(state, STATUS_LABELS["error"])
+    asset = STATUS_ASSET_ROOT / f"{state}.webp"
+    image = ""
+    if asset.is_file():
+        encoded = base64.b64encode(asset.read_bytes()).decode("ascii")
+        image = f"<img class='status-preview' src='data:image/webp;base64,{encoded}' alt='' aria-hidden='true'>"
+    return f"<div class='status-strip status-{html.escape(state)}' role='status'>{image}<span class='status-fallback' aria-hidden='true'>●</span><strong>{html.escape(label)}</strong></div>"
 
 
 def _checks_markdown() -> str:
     config = load_config(ROOT)
     checks = run_doctor(ROOT, config)
-    rows = "\n".join(f"| {'🟢' if item.ok else '🔴'} | {item.label} | {item.detail.replace('|', '/')[:180]} |" for item in checks if item.label in {"Sağlık modeli", "Alet modeli", "CUDA", "Derinlik modeli/cache"})
+    rows = "\n".join(f"| {'🟢' if item.ok else '🔴'} | {item.label} | {item.detail.replace('|', '/')[:180]} |" for item in checks if item.label in {"Health modeli", "Alet modeli", "CUDA", "Derinlik modeli/cache"})
     return "### Yerel sistem durumu\n\n| Durum | Bileşen | Ayrıntı |\n|---|---|---|\n" + rows
 
 
 def _models_markdown() -> str:
     checks = run_doctor(ROOT, load_config(ROOT))
-    health_ok = next(item.ok for item in checks if item.label == "Sağlık modeli")
+    health_ok = next(item.ok for item in checks if item.label == "Health modeli")
     instrument_ok = next(item.ok for item in checks if item.label == "Alet modeli")
     if health_ok and instrument_ok:
         return "### Modeller\n\n✓ Sağlık personeli modeli hazır  \n✓ Cerrahi alet modeli hazır"
@@ -41,15 +63,18 @@ def _models_markdown() -> str:
     return "### Modeller\n\nModel ağırlıkları henüz indirilmedi veya doğrulanamadı.\n" + details
 
 
-def download_models(progress=gr.Progress(track_tqdm=False)) -> str:
+def download_models(progress=gr.Progress(track_tqdm=False)):
+    yield _status_html("checking_models"), _models_markdown()
+
     def update(key: str, current: int, total: int | None) -> None:
         ratio = current / total if total else None
         progress(ratio, desc=f"{key} indiriliyor") if ratio is not None else progress(desc=f"{key} indiriliyor")
     try:
         ModelManager(ROOT).download_all(progress=update)
     except ModelManagerError as error:
-        return f"### Modeller\n\n❌ {html.escape(str(error))}"
-    return _models_markdown()
+        yield _status_html("error"), f"### Modeller\n\n❌ {html.escape(str(error))}"
+        return
+    yield _status_html("completed"), _models_markdown()
 
 
 def _summary_html(summary_path: Path) -> str:
@@ -72,6 +97,8 @@ def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, 
         raise gr.Error("Başka bir analiz çalışıyor. Tamamlanmasını veya iptal edilmesini bekleyin.")
     CANCEL_EVENT.clear()
     try:
+        unchanged = [gr.skip()] * 7
+        yield _status_html("analyzing"), "⏳ Analiz sürüyor; ilerleme ayrıntıları aşağıda güncellenir.", *unchanged
         base = load_config(ROOT)
         config = replace(
             base,
@@ -91,7 +118,9 @@ def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, 
         result = AnalysisPipeline(ROOT, config).run(Path(video), progress=update, cancel_event=CANCEL_EVENT)
         file_map = {path.name: path for path in result.files}
         files = [str(path) for path in result.files if path.is_file()]
-        return (
+        yield _status_html("finalizing"), "📦 Raporlar ve indirme paketi hazırlanıyor.", *unchanged
+        yield (
+            _status_html("completed"),
             "✅ Analiz tamamlandı. Sonuçlar yalnızca bu yerel çalışma klasöründe üretildi.",
             str(result.processed_video),
             _summary_html(result.summary),
@@ -102,10 +131,10 @@ def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, 
             files,
         )
     except AnalysisCancelled:
-        return "⚠️ Analiz iptal edildi; tamamlanmış bir sonuç paketi oluşturulmadı.", None, "", None, None, None, "", []
+        yield _status_html("error"), "⚠️ Analiz iptal edildi; tamamlanmış bir sonuç paketi oluşturulmadı.", None, "", None, None, None, "", []
     except Exception as error:
         # Technical details are in a run-local log if a run directory was created.
-        return f"❌ Analiz başlatılamadı: {html.escape(str(error))}", None, "", None, None, None, "", []
+        yield _status_html("error"), f"❌ Analiz başlatılamadı: {html.escape(str(error))}", None, "", None, None, None, "", []
     finally:
         RUN_LOCK.release()
 
@@ -117,15 +146,21 @@ def cancel() -> str:
 
 CSS = """
 body, .gradio-container {background:#050b17 !important; color:#e8fbff !important}
-.gradio-container {max-width:1450px !important}
+.gradio-container {max-width:1450px !important;--body-text-color:#e8fbff;--block-label-text-color:#bce7ed;--block-title-text-color:#e8fbff;--input-text-color:#102131}
+.gradio-container h1,.gradio-container h2,.gradio-container h3,.gradio-container p,.gradio-container .prose,.gradio-container .md{color:#e8fbff !important}
+.gradio-container label span{color:#102131 !important}
+.gradio-container input,.gradio-container textarea,.gradio-container select{color:#102131 !important}
+.gradio-container button{font-weight:700}
 #title {background:linear-gradient(100deg,#071a31,#0a3440); border:1px solid #16c9d5; border-radius:16px; padding:20px}
 .summary,.metric {background:#0b1e31;border:1px solid #1f6372;border-radius:12px;padding:14px;margin:8px 0}.metrics{display:flex;gap:10px;flex-wrap:wrap}.metric{min-width:200px}.notice{color:#94dce4}
+.status-strip{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #1f6372;border-radius:12px;background:#0b1e31}.status-preview{width:52px;height:52px;object-fit:contain}.status-fallback{display:none;color:#36cad5;font-size:28px}@media (prefers-reduced-motion:reduce){.status-preview{display:none}.status-fallback{display:inline}}
 """
 
 
 def build_app() -> gr.Blocks:
     with gr.Blocks(title="Cerrahi Video Analitiği") as demo:
         gr.HTML("<div id='title'><h1>◈ Cerrahi Video Analitiği</h1><p>Yerel çalışır · Kimliksizleştirme öncelikli · Göreli 3B takip</p></div>")
+        status_animation = gr.HTML(_status_html("idle"))
         gr.Markdown(_checks_markdown())
         model_status = gr.Markdown(_models_markdown())
         download_button = gr.Button("Modelleri İndir", variant="secondary")
@@ -157,9 +192,9 @@ def build_app() -> gr.Blocks:
                 trajectory = gr.HTML()
             with gr.Tab("Dosyaları indir"):
                 downloads = gr.File(label="Tekil dosyalar ve results.zip", file_count="multiple")
-        start.click(analyse, [video, blur, confidence, iou, tracker, depth_stride, depth_enabled], [message, output_video, summary, usage_chart, health_chart, motion_chart, trajectory, downloads])
+        start.click(analyse, [video, blur, confidence, iou, tracker, depth_stride, depth_enabled], [status_animation, message, output_video, summary, usage_chart, health_chart, motion_chart, trajectory, downloads])
         stop.click(cancel, outputs=message)
-        download_button.click(download_models, outputs=model_status)
+        download_button.click(download_models, outputs=[status_animation, model_status])
     return demo.queue(default_concurrency_limit=1, max_size=4)
 
 

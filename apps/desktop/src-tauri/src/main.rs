@@ -6,6 +6,17 @@ use tauri::{Manager, State};
 
 struct ManagedApi(Mutex<Option<Child>>);
 
+impl Drop for ManagedApi {
+    fn drop(&mut self) {
+        if let Ok(slot) = self.0.get_mut() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ManagedConnection {
@@ -14,7 +25,7 @@ struct ManagedConnection {
 }
 
 fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
 #[tauri::command]

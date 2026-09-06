@@ -16,7 +16,6 @@ from surgical_pipeline.config import load_config
 from surgical_pipeline.model_loader import load_validated_yolo_models, resolve_model_file_paths
 from surgical_pipeline.pose_estimator import PoseEstimator
 from surgical_pipeline.pose_pipeline import run_pose_pilot
-from surgical_pipeline.utils import sha256_file
 from surgical_pipeline.video_io import read_metadata
 
 

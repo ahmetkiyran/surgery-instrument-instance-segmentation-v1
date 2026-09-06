@@ -5,10 +5,11 @@ import idle from "../../desktop/assets/lottie/idle.json";
 import checkingModels from "../../desktop/assets/lottie/checking_models.json";
 import uploading from "../../desktop/assets/lottie/uploading.json";
 import analyzing from "../../desktop/assets/lottie/analyzing.json";
+import finalizing from "../../desktop/assets/lottie/finalizing.json";
 import completed from "../../desktop/assets/lottie/completed.json";
 import error from "../../desktop/assets/lottie/error.json";
 
-const animations = { idle, checking_models: checkingModels, uploading, analyzing, completed, error };
+const animations = { idle, checking_models: checkingModels, uploading, analyzing, finalizing, completed, error };
 export type AnimationState = keyof typeof animations;
 
 export function StatusAnimation({ state }: { state: AnimationState }) {
@@ -19,5 +20,5 @@ export function StatusAnimation({ state }: { state: AnimationState }) {
     return () => subscription.remove();
   }, []);
   if (reduceMotion) return <View accessibilityLabel={state}><Text style={{ color: "#1595aa", fontSize: 28 }}>●</Text></View>;
-  return <LottieView source={animations[state]} autoPlay loop={state === "checking_models" || state === "uploading" || state === "analyzing"} style={{ width: 56, height: 56 }} />;
+  return <LottieView source={animations[state]} autoPlay loop={state === "checking_models" || state === "uploading" || state === "analyzing" || state === "finalizing"} style={{ width: 56, height: 56 }} />;
 }
