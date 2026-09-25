@@ -174,8 +174,10 @@ class AnalysisPipeline:
         if self.detector_runner:
             health_path = instrument_path = Path("mock.pt")
             health_class_id = 0
-            health_info = ModelInfo(path="mock.pt", sha256="mock", names={0: "health_personel"}, task="segment")
-            instrument_info = ModelInfo(path="mock.pt", sha256="mock", names={0: "scissors"}, task="segment")
+            health_name = self.config.health_class_name or "health_personel"
+            instrument_names = self.config.instrument_display_names or {"scissors": "scissors"}
+            health_info = ModelInfo(path="mock.pt", sha256="mock", names={0: health_name}, task="segment")
+            instrument_info = ModelInfo(path="mock.pt", sha256="mock", names={index: name for index, name in enumerate(instrument_names)}, task="segment")
         else:
             health_path, instrument_path = self.preflight(health_model, instrument_model)
         device, use_half = _device(self.config.device, self.config.fp16)

@@ -1,6 +1,7 @@
 import { ApiError } from "./errors";
 import type {
   Artifact,
+  AnalysisSession,
   CreateJobInput,
   Defaults,
   Doctor,
@@ -10,6 +11,7 @@ import type {
   ModelStatus,
   UploadInput,
   UploadResult,
+  SelectionEvent,
 } from "./types";
 
 export interface ApiClientOptions {
@@ -28,7 +30,10 @@ export class SurgicalApiClient {
   constructor(options: ApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
     this.token = options.token?.trim() || undefined;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // WebView (including Tauri's Windows WebView2) requires fetch to retain
+    // its global/window receiver. A detached `fetch` reference throws
+    // "Illegal invocation" before the request reaches the local API.
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   withConnection(options: Pick<ApiClientOptions, "baseUrl" | "token">): SurgicalApiClient {
@@ -78,6 +83,40 @@ export class SurgicalApiClient {
     return this.request<Job>("/api/v1/jobs", { method: "POST", body: JSON.stringify(input) });
   }
 
+  async createSession(): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>("/api/v1/sessions", { method: "POST" });
+  }
+
+  async attachSessionVideo(sessionId: string, input: CreateJobInput): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/video`, { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async addSelection(sessionId: string, event: SelectionEvent): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/selections`, { method: "POST", body: JSON.stringify(event) });
+  }
+
+  async startSession(sessionId: string, input: CreateJobInput): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/start`, { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async getSession(sessionId: string): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/status`);
+  }
+
+  async removeSelection(sessionId: string, eventId: string): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/selections/${encodeURIComponent(eventId)}/remove`, { method: "POST" });
+  }
+
+  async setSessionPaused(sessionId: string, paused: boolean): Promise<AnalysisSession> {
+    return this.request<AnalysisSession>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/${paused ? "pause" : "resume"}`, { method: "POST" });
+  }
+
+  async sessionPreview(sessionId: string, frameIndex: number, overlay: "clean" | "inspection" | "privacy-xray" = "clean"): Promise<Blob> {
+    const response = await this.rawRequest(`/api/v1/sessions/${encodeURIComponent(sessionId)}/preview?frame_index=${Math.max(0, Math.floor(frameIndex))}&overlay=${encodeURIComponent(overlay)}`);
+    if (!response.ok) throw await this.errorFrom(response);
+    return response.blob();
+  }
+
   async listJobs(): Promise<Job[]> {
     return this.request<Job[]>("/api/v1/jobs");
   }
@@ -88,6 +127,14 @@ export class SurgicalApiClient {
 
   async cancelJob(jobId: string): Promise<Job> {
     return this.request<Job>(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+  }
+
+  async pauseJob(jobId: string): Promise<Job> {
+    return this.request<Job>(`/api/v1/jobs/${encodeURIComponent(jobId)}/pause`, { method: "POST" });
+  }
+
+  async resumeJob(jobId: string): Promise<Job> {
+    return this.request<Job>(`/api/v1/jobs/${encodeURIComponent(jobId)}/resume`, { method: "POST" });
   }
 
   async listArtifacts(jobId: string): Promise<Artifact[]> {

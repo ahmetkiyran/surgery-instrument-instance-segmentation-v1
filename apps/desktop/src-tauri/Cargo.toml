@@ -6,7 +6,7 @@ authors = ["Surgical Video Analytics contributors"]
 edition = "2021"
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }

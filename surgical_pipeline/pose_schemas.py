@@ -30,6 +30,8 @@ class PoseObservation:
     health_match_status: str = "unmatched_person"
     health_match_score: float = 0.0
     pose_track_id: int | None = None
+    # V1 health tracker identity is optional and populated by the unified core.
+    v1_track_id: int | None = None
     tracking_status: str = "unassigned"
 
     def visible_indices(self, threshold: float) -> np.ndarray:

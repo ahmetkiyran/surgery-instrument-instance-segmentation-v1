@@ -34,10 +34,20 @@ class Artifact:
         )
 
 
-def _kind(path: Path) -> str:
+def _kind(path: Path, render_mode: str | None = None) -> str:
     name = path.name.casefold()
+    if name == "sam3_inspection.mp4":
+        return "inspection_video"
+    if name in {"inspection_tracking.mp4", "tracking_rgb.mp4"}:
+        return "inspection_video"
+    if name == "processed_video_xray_sam3.mp4":
+        return "privacy_xray_video"
+    if name in {"privacy_xray_tracking.mp4", "security_xray_final.mp4"}:
+        return "privacy_xray_video"
     if name == "skeleton_tracking.mp4":
         return "skeleton_video"
+    if name == "processed_video.mp4" and render_mode in {"dual", "privacy-xray"}:
+        return "privacy_xray_video"
     if name == "processed_video.mp4":
         return "blur_video"
     if "trajectory" in name and path.suffix == ".html":
@@ -60,6 +70,13 @@ def collect_artifacts(job_root: Path) -> dict[str, Artifact]:
     result: dict[str, Artifact] = {}
     if not root.is_dir():
         return result
+    render_mode: str | None = None
+    config_path = root / "run_config.yaml"
+    if config_path.is_file():
+        for line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("render_mode:"):
+                render_mode = line.partition(":")[2].strip()
+                break
     for candidate in sorted(root.rglob("*")):
         if not candidate.is_file() or candidate.suffix.casefold() not in ALLOWED_SUFFIXES:
             continue
@@ -70,13 +87,16 @@ def collect_artifacts(job_root: Path) -> dict[str, Artifact]:
             continue
         relative = path.relative_to(root).as_posix()
         artifact_id = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:24]
-        kind = _kind(path)
+        kind = _kind(path, render_mode)
         result[artifact_id] = Artifact(
             artifact_id=artifact_id,
             path=path,
             filename=path.name,
             kind=kind,
             media_type=_media_type(path),
-            sensitive=kind == "blur_video",
+            # Inspection/RGB outputs contain the source scene and therefore
+            # require the same explicit confirmation as other source-derived
+            # media.  Synthetic X-ray output is geometry-only.
+            sensitive=kind in {"blur_video", "inspection_video"},
         )
     return result

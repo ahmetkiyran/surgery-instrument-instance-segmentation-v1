@@ -79,6 +79,9 @@ def parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", type=_path, help="Varsayılanların üzerine uygulanacak YAML dosyası.")
     doctor.add_argument("--device", help="auto, cpu, cuda[:N] veya GPU indeksi.")
     doctor.add_argument("--privacy-mode", choices=("skeleton-only", "blur", "both"), help="Pose modelinin kritik sayılacağı analiz modu.")
+    doctor.add_argument("--sam3", action="store_true", help="Kardeş sam3tracking ortamı, checkpoint ve CUDA ön kontrolü.")
+    doctor.add_argument("--sam3-model", type=_path, help="SAM3 checkpoint; SAM3_MODEL_PATH ve varsayılan yolun önündedir.")
+    doctor.add_argument("--json", action="store_true", help="Doctor sonucunu makine-okunabilir JSON olarak yazdır.")
 
     version = subcommands.add_parser("version", help="Paket ve çalışma zamanı sürümlerini göster")
     version.set_defaults(command="version")
@@ -94,6 +97,10 @@ def parser() -> argparse.ArgumentParser:
     analyze.add_argument("--output-dir", type=_path, help="Çalışma alt dizinlerinin yazılacağı kök dizin.")
     analyze.add_argument("--config", type=_path, help="Varsayılanların üzerine uygulanacak YAML dosyası.")
     analyze.add_argument("--privacy-mode", choices=("skeleton-only", "blur", "both"), help="skeleton-only RGB/sesi çıktı videosuna aktarmadan sentetik iskelet üretir; varsayılan config veya skeleton-only.")
+    analyze.add_argument("--render-mode", choices=("legacy", "inspection", "privacy-xray", "dual"), default="legacy", help="legacy mevcut v1 davranışını korur; diğer modlar ortak analiz çekirdeğini kullanır.")
+    analyze.add_argument("--enable-sam3", action="store_true", help="Gerçek sam3tracking adapter'ıyla kayıtlı seçimleri takip et.")
+    analyze.add_argument("--enable-xray-skeleton", action="store_true", help="deneme bone-atlas tabanlı sentetik X-ray renderer'ını etkinleştir.")
+    analyze.add_argument("--selection-events", type=_path, help="Offline render için SelectionEvent JSON dosyası.")
     analyze.add_argument("--device", help="auto, cpu, cuda[:N] veya GPU indeksi. CPU'da FP16 kapatılır.")
     analyze.add_argument("--imgsz", type=int, help="YOLO çıkarım görüntü boyutu; en az 32 piksel.")
     analyze.add_argument("--health-conf", type=float, help="Health modeli güven eşiği (0, 1].")
@@ -112,6 +119,19 @@ def parser() -> argparse.ArgumentParser:
     analyze.add_argument("--health-class", help=argparse.SUPPRESS)
     analyze.add_argument("--blur-kernel", type=int, help=argparse.SUPPRESS)
     analyze.add_argument("--confidence", type=float, help=argparse.SUPPRESS)
+    render = subcommands.add_parser("render", help="Kaydedilmiş selection event'leriyle ortak çıktıları yeniden üret", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    render.add_argument("--input-video", dest="input", required=True, type=_path, help="Kaynak video.")
+    render.add_argument("--analysis-json", type=_path, help="Uyumluluk için analiz özeti; ortak core modelleri yeniden çalıştırır.")
+    render.add_argument("--selection-events", type=_path, required=True, help="SelectionEvent JSON listesi.")
+    render.add_argument("--output-dir", required=True, type=_path, help="Çıktı klasörü.")
+    _add_model_options(render)
+    render.add_argument("--render-mode", choices=("inspection", "privacy-xray", "dual"), default="dual")
+    render.add_argument("--enable-sam3", action="store_true")
+    render.add_argument("--enable-xray-skeleton", action="store_true")
+    render.add_argument("--device", default=None)
+    render.add_argument("--pose-conf", type=float, default=0.25)
+    render.add_argument("--quiet", action="store_true")
+    render.add_argument("--debug", action="store_true")
     return command
 
 
@@ -340,10 +360,22 @@ def _run_models(args: argparse.Namespace, root: Path) -> int:
 
 
 def _run_doctor(args: argparse.Namespace, root: Path, config: AppConfig) -> int:
+    if getattr(args, "sam3", False):
+        from .doctor import run_sam3_doctor
+        status, checks = run_sam3_doctor(root, getattr(args, "sam3_model", None))
+        if getattr(args, "json", False):
+            print(json.dumps({"status": status, "checks": [item.__dict__ for item in checks]}, ensure_ascii=False, indent=2))
+            return EXIT_OK if status == "ready" else EXIT_VALIDATION
+        print(f"SAM3 status: {status}")
+        result = print_doctor(checks)
+        return EXIT_OK if status == "ready" and result == EXIT_OK else EXIT_VALIDATION
     mode = args.privacy_mode or config.cli_privacy_mode
-    return print_doctor(
-        run_doctor(root, config, args.health_model, args.instrument_model, args.pose_model, args.output_dir, mode in {"skeleton-only", "both"}, args.config)
-    )
+    checks = run_doctor(root, config, args.health_model, args.instrument_model, args.pose_model, args.output_dir, mode in {"skeleton-only", "both"}, args.config)
+    if getattr(args, "json", False):
+        critical_failure = any(item.critical for item in checks)
+        print(json.dumps({"status": "not_ready" if critical_failure else "ready", "checks": [item.__dict__ for item in checks]}, ensure_ascii=False, indent=2))
+        return EXIT_VALIDATION if critical_failure else EXIT_OK
+    return print_doctor(checks)
 
 
 def _run_analyze(args: argparse.Namespace, root: Path, config: AppConfig) -> int:
@@ -359,6 +391,25 @@ def _run_analyze(args: argparse.Namespace, root: Path, config: AppConfig) -> int
     blur_result = pose_result = None
     try:
         with _cancel_at_safe_boundary(cancellation):
+            if args.render_mode != "legacy":
+                from .unified import SelectionEvent, UnifiedAnalysisPipeline
+
+                events: list[SelectionEvent] = []
+                if args.selection_events:
+                    raw = json.loads(args.selection_events.read_text(encoding="utf-8"))
+                    if not isinstance(raw, list):
+                        raise CliError(EXIT_USAGE, "selection-events bir JSON listesi olmalıdır.")
+                    events = [SelectionEvent.from_dict(item) for item in raw if isinstance(item, dict)]
+                result = UnifiedAnalysisPipeline(root, config).run(
+                    targets.input_video, targets.output_dir, targets.health_model, targets.instrument_model,
+                    targets.pose_model or _default_pose_path(root), render_mode=args.render_mode,
+                    enable_sam3=args.enable_sam3, enable_xray_skeleton=args.enable_xray_skeleton,
+                    selection_events=events, progress=progress, cancel_event=cancellation,
+                )
+                print("\nBirleşik analiz tamamlandı.")
+                for path in result.artifacts:
+                    print(f"- {path.name}")
+                return EXIT_OK
             if targets.privacy_mode in {"blur", "both"}:
                 from .pipeline import AnalysisPipeline
 
@@ -444,6 +495,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _run_doctor(args, root, config)
     try:
+        if args.command == "render":
+            # Render uses the same implementation as non-legacy analyze; retained
+            # attributes make this an additive CLI surface rather than a rename.
+            for name, value in {"privacy_mode": "skeleton-only", "imgsz": None, "health_conf": None, "instrument_conf": None, "iou": None, "tracker": None, "gap_tolerance": None, "minimum_interval": None, "depth_stride": None, "disable_depth": False, "overwrite": False, "blur_kernel": None, "confidence": None}.items():
+                if not hasattr(args, name):
+                    setattr(args, name, value)
         return _run_analyze(args, root, config)
     except CliError as error:
         return _report_runtime_error(error, args.debug)

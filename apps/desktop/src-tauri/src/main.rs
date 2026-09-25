@@ -36,8 +36,15 @@ fn start_managed_api(state: State<'_, ManagedApi>) -> Result<ManagedConnection, 
     }
     *child_slot = None;
     let root = project_root();
-    let python = root.join(".venv").join("Scripts").join("python.exe");
-    let executable = if python.is_file() { python } else { PathBuf::from("python") };
+    let configured = std::env::var_os("SAM3_PYTHON_PATH").map(PathBuf::from);
+    let sibling = root.parent()
+        .map(|parent| parent.join("sam3tracking").join(".venv").join("Scripts").join("python.exe"));
+    let local = root.join(".venv").join("Scripts").join("python.exe");
+    let executable = configured
+        .filter(|path| path.is_file())
+        .or_else(|| sibling.filter(|path| path.is_file()))
+        .or_else(|| local.is_file().then_some(local))
+        .unwrap_or_else(|| PathBuf::from("python"));
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|_| "Yerel API için bir loopback port ayrılamadı.")?;
     let port = listener.local_addr().map_err(|_| "Yerel port okunamadı.")?.port();
     drop(listener);

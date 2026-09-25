@@ -6,6 +6,7 @@ import importlib
 import os
 import platform
 import sys
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from .model_loader import inspect_model, resolve_health_class_id, validate_model
 from .model_manager import ModelManager, ModelManagerError
 from .pose_estimator import PoseEstimator
 from .utils import hardware_summary, tool_available
+
+
+SAM3_CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
 
 
 @dataclass(frozen=True)
@@ -29,6 +33,80 @@ class Check:
     @property
     def critical(self) -> bool:
         return self.severity == "critical" and not self.ok
+
+
+def run_sam3_doctor(project_root: Path, model_override: Path | None = None) -> tuple[str, list[Check]]:
+    """Non-destructive readiness probe for the sibling real SAM3 installation."""
+    root = project_root.resolve()
+    tracking_root = Path(os.environ.get("SAM3_REPO_PATH", root.parent / "sam3tracking")).expanduser()
+    source_root = tracking_root / "src"
+    model = (model_override or Path(os.environ.get("SAM3_MODEL_PATH", tracking_root / "models" / "sam3.pt"))).expanduser()
+    config = Path(os.environ.get("SAM3_CONFIG_PATH", tracking_root / "configs" / "default.yaml")).expanduser()
+    checks = [
+        Check("SAM3 tracking deposu", tracking_root.is_dir(), str(tracking_root) if tracking_root.is_dir() else "Bulunamadı."),
+        Check("SAM3 adapter kaynağı", (source_root / "sam3tracking" / "sam3_adapter.py").is_file(), "sam3_adapter.py"),
+        Check("SAM3 config", config.is_file(), str(config), "warning"),
+        Check("SAM3 checkpoint", model.is_file(), str(model) if model.is_file() else f"Eksik: {model.name}"),
+    ]
+    if model.is_file():
+        digest = hashlib.sha256()
+        try:
+            with model.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
+                    digest.update(chunk)
+            actual = digest.hexdigest()
+            checks.append(Check(
+                "SAM3 checkpoint SHA-256",
+                actual == SAM3_CHECKPOINT_SHA256,
+                actual if actual == SAM3_CHECKPOINT_SHA256 else f"Beklenen {SAM3_CHECKPOINT_SHA256}; bulunan {actual}",
+            ))
+        except OSError as error:
+            checks.append(Check("SAM3 checkpoint SHA-256", False, str(error)))
+    try:
+        import torch
+        cuda = bool(torch.cuda.is_available())
+        checks += [
+            Check("SAM3 PyTorch", True, str(torch.__version__)),
+            Check("SAM3 CUDA", cuda, f"CUDA {torch.version.cuda}; {torch.cuda.get_device_name(0) if cuda else 'GPU unavailable'}"),
+            Check("SAM3 GPU memory", cuda, f"{torch.cuda.get_device_properties(0).total_memory // 1024**2} MiB" if cuda else "GPU unavailable"),
+        ]
+        if cuda and tuple(map(int, (torch.version.cuda or "0.0").split(".")[:2])) < (12, 6):
+            checks.append(Check("SAM3 CUDA sürümü", False, "Official SAM3 video predictor requires CUDA >= 12.6."))
+    except Exception as error:
+        checks.append(Check("SAM3 PyTorch/CUDA", False, str(error)))
+    previous = list(sys.path)
+    try:
+        if source_root.is_dir(): sys.path.insert(0, str(source_root))
+        importlib.import_module("sam3tracking.sam3_adapter")
+        importlib.import_module("sam3tracking.interactive_tracker")
+        checks.append(Check("SAM3 adapter import", True, "sam3tracking adapter/recovery/propagation import edildi"))
+    except Exception as error:
+        checks.append(Check("SAM3 adapter import", False, str(error)))
+    finally:
+        sys.path[:] = previous
+    model_builder = None
+    try:
+        model_builder = importlib.import_module("sam3.model_builder")
+        checks.append(Check("Official SAM3 package", True, "sam3.model_builder"))
+    except Exception as error:
+        checks.append(Check("Official SAM3 package", False, str(error)))
+    if model_builder is not None and model.is_file() and any(check.label == "SAM3 CUDA" and check.ok for check in checks):
+        try:
+            import torch
+            torch.cuda.empty_cache()
+            predictor = model_builder.build_sam3_video_predictor(checkpoint_path=str(model))
+            allocated_mib = round(torch.cuda.memory_allocated() / 1024**2)
+            del predictor
+            torch.cuda.empty_cache()
+            checks.append(Check("SAM3 model load preflight", True, f"Resmî predictor CUDA'da yüklendi ({allocated_mib} MiB)."))
+        except Exception as error:
+            checks.append(Check("SAM3 model load preflight", False, str(error)))
+    if not model.is_file(): status = "missing_model"
+    elif not any(check.label == "Official SAM3 package" and check.ok for check in checks): status = "missing_dependency"
+    elif not any(check.label == "SAM3 CUDA" and check.ok for check in checks): status = "cuda_unavailable"
+    elif any(check.critical for check in checks): status = "adapter_error"
+    else: status = "ready"
+    return status, checks
 
 
 def _package_check(module: str, *, required: bool = True) -> Check:

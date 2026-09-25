@@ -39,6 +39,7 @@ class JobRecord:
     error_code: str | None = None
     safe_error_message: str | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
+    pause_event: threading.Event = field(default_factory=threading.Event, repr=False)
     artifacts: dict[str, Artifact] = field(default_factory=dict, repr=False)
 
     def response(self) -> JobResponse:
@@ -120,6 +121,45 @@ class JobManager:
             self._wake.notify()
             return record
 
+    def pause(self, job_id: str) -> JobRecord | None:
+        """Cooperatively pause a running job at the next pipeline checkpoint."""
+        with self._wake:
+            record = self._jobs.get(job_id)
+            if record is None or record.status in {"completed", "failed", "cancelled"}:
+                return record
+            record.pause_event.set()
+            if record.status in {"queued", "validating", "running"}:
+                record.status = "paused"
+                record.current_stage = "DuraklatÄ±ldÄ±"
+                record.message = "Analiz duraklatÄ±ldÄ±; devam etmek iÃ§in Resume kullanÄ±n."
+            self._wake.notify_all()
+            return record
+
+    def resume(self, job_id: str) -> JobRecord | None:
+        """Release a paused job; the worker continues from its next checkpoint."""
+        with self._wake:
+            record = self._jobs.get(job_id)
+            if record is None or record.status in {"completed", "failed", "cancelled"}:
+                return record
+            record.pause_event.clear()
+            if record.status == "paused":
+                record.status = "running"
+                record.current_stage = "Analiz"
+                record.message = "Analiz devam ediyor."
+            self._wake.notify_all()
+            return record
+
+    def _checkpoint(self, record: JobRecord) -> None:
+        """Wait without holding the manager lock so pause/resume/cancel remain responsive."""
+        with self._wake:
+            while record.pause_event.is_set() and not record.cancel_event.is_set():
+                record.status = "paused"
+                record.current_stage = "DuraklatÄ±ldÄ±"
+                self._wake.wait(timeout=0.25)
+            if record.cancel_event.is_set():
+                from ..pipeline import AnalysisCancelled
+                raise AnalysisCancelled()
+
     def _worker_loop(self) -> None:
         while True:
             with self._wake:
@@ -133,6 +173,7 @@ class JobManager:
 
     def _run(self, record: JobRecord) -> None:
         try:
+            self._checkpoint(record)
             self._set(record, status="validating", current_stage="Doğrulanıyor", message="Video, modeller ve ayarlar doğrulanıyor.", started_at=_now())
             source = validate_video_path(record.source_path)
             from ..cli import _default_pose_path
@@ -142,6 +183,7 @@ class JobManager:
 
             options = record.request.options
             metadata = read_metadata(source)
+            self._checkpoint(record)
             health_model, instrument_model = resolve_model_file_paths(self.settings.project_root, None, None, auto_download=False)
             pose_model = _default_pose_path(self.settings.project_root)
             if options.privacy_mode in {"skeleton-only", "both"} and not pose_model.is_file():
@@ -169,6 +211,7 @@ class JobManager:
 
             def progress(start: float, end: float):
                 def update(processed: int, total: int, eta: float, stage: str) -> None:
+                    self._checkpoint(record)
                     scaled = start + (end - start) * (processed / total if total else 0.0)
                     self._set(
                         record,
@@ -183,7 +226,17 @@ class JobManager:
                 return update
 
             self._set(record, status="running", current_stage="Analiz", message="Analiz motoru başlatıldı.")
-            if options.privacy_mode == "blur":
+            if options.render_mode != "legacy":
+                from ..unified import SelectionEvent, UnifiedAnalysisPipeline
+
+                events = [SelectionEvent.from_dict(item) for item in options.selection_events]
+                UnifiedAnalysisPipeline(self.settings.project_root, config).run(
+                    source, record.job_root, health_model, instrument_model, pose_model,
+                    render_mode=options.render_mode, enable_sam3=options.enable_sam3,
+                    enable_xray_skeleton=options.enable_xray_skeleton, selection_events=events,
+                    progress=progress(0, 99), cancel_event=record.cancel_event,
+                )
+            elif options.privacy_mode == "blur":
                 AnalysisPipeline(self.settings.project_root, config).run(source, health_model, instrument_model, progress(0, 99), record.cancel_event)
             elif options.privacy_mode == "skeleton-only":
                 run_pose_pilot(source, health_model, instrument_model, record.job_root, pose_model, config, keypoint_confidence=options.pose_confidence, progress=progress(0, 99), cancel_event=record.cancel_event)

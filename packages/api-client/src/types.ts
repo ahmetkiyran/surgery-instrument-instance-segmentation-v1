@@ -2,12 +2,14 @@ export type JobStatus =
   | "queued"
   | "validating"
   | "running"
+  | "paused"
   | "finalizing"
   | "completed"
   | "failed"
   | "cancelled";
 
 export type PrivacyMode = "skeleton-only" | "blur" | "both";
+export type RenderMode = "legacy" | "inspection" | "privacy-xray" | "dual";
 export type Tracker = "botsort" | "bytetrack";
 
 export interface Artifact {
@@ -30,6 +32,35 @@ export interface JobOptions {
   tracker?: Tracker;
   /** Only accepted from a Tauri loopback connection, never mobile/LAN. */
   output_directory?: string;
+  render_mode?: RenderMode;
+  enable_sam3?: boolean;
+  enable_xray_skeleton?: boolean;
+  selection_events?: SelectionEvent[];
+}
+
+export interface SelectionEvent {
+  normalized_x: number;
+  normalized_y: number;
+  displayed_width: number;
+  displayed_height: number;
+  source_width: number;
+  source_height: number;
+  frame_index: number;
+  timestamp: number;
+  target_category?: string;
+  action?: "add" | "select" | "remove" | "pause" | "resume";
+  unified_track_id?: string;
+  sam3_track_id?: number;
+  confidence?: number;
+}
+
+export interface SessionTrack { event_id: string; sam3_track_id: number | null; unified_track_id: string | null; category: string; }
+export interface AnalysisSession {
+  session_id: string; status: string; job_id: string | null;
+  current_frame: number; current_timestamp: number; video_width: number | null; video_height: number | null;
+  source_fps: number | null; frame_count: number | null;
+  active_tracks: SessionTrack[]; selected_tracks: string[]; preview_url: string | null;
+  inspection_preview_url: string | null; privacy_preview_url: string | null; progress: number; warnings: string[]; error: string | null;
 }
 
 export interface CreateJobInput {

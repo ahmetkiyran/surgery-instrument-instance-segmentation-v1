@@ -18,6 +18,7 @@ class ServerSettings:
     token: str | None = None
     lan_mode: bool = False
     max_upload_bytes: int = 20 * 1024 * 1024 * 1024
+    max_upload_duration_seconds: float | None = 3600.0
     data_root_override: Path | None = None
     allowed_origins: tuple[str, ...] = (
         "http://localhost:1420",
@@ -50,6 +51,8 @@ class ServerSettings:
             raise ValueError("LAN modu için en az 32 karakterlik SURGICAL_API_TOKEN gereklidir.")
         if self.max_upload_bytes <= 0:
             raise ValueError("Maksimum upload boyutu pozitif olmalıdır.")
+        if self.max_upload_duration_seconds is not None and self.max_upload_duration_seconds <= 0:
+            raise ValueError("Maksimum upload süresi pozitif olmalıdır.")
         return self
 
 
@@ -65,6 +68,7 @@ def settings_from_environment(project_root: Path, **overrides: object) -> Server
         "token": os.environ.get("SURGICAL_API_TOKEN") or None,
         "lan_mode": env_lan,
         "max_upload_bytes": int(os.environ.get("SURGICAL_API_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024 * 1024))),
+        "max_upload_duration_seconds": float(os.environ.get("SURGICAL_API_MAX_UPLOAD_SECONDS", "3600")),
         "data_root_override": Path(os.environ["SURGICAL_API_DATA_ROOT"]).expanduser() if os.environ.get("SURGICAL_API_DATA_ROOT") else None,
         "allowed_origins": origins or ServerSettings.allowed_origins,
     }

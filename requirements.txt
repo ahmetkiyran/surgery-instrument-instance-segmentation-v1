@@ -1,7 +1,8 @@
-# Tested on the local RTX 5060 system with Python 3.11 and CUDA-enabled PyTorch 2.11.
---extra-index-url https://download.pytorch.org/whl/cu128
-torch==2.11.0+cu128
-torchvision==0.26.0+cu128
+# Base install is intentionally not tied to one CUDA wheel or GPU vendor.
+# For a GPU, install the matching PyTorch wheel from pytorch.org before/after
+# this file according to the target driver; SAM3 uses its own optional vendor environment.
+torch>=2.5,<3
+torchvision>=0.20,<1
 ultralytics==8.4.138
 lap>=0.5.12,<1
 opencv-python>=4.10,<5

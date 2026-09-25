@@ -1,4 +1,5 @@
 import json
+import csv
 import threading
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import numpy as np
 import pytest
 
 from surgical_pipeline.analytics import usage_intervals
-from surgical_pipeline.config import AppConfig
+from surgical_pipeline.config import AppConfig, load_config
 from surgical_pipeline.coordinates_3d import point_from_detection
 from surgical_pipeline.model_loader import ModelValidationError, validate_model_roles
 from surgical_pipeline.pipeline import AnalysisCancelled, AnalysisPipeline
@@ -91,6 +92,29 @@ def test_mock_pipeline_writes_versioned_contract(tmp_path: Path) -> None:
     assert "NaN" not in result.summary.read_text(encoding="utf-8")
     header = (result.run_dir / "tracks.csv").read_text(encoding="utf-8").splitlines()[0]
     assert header.startswith("schema_version,frame_index,timestamp_s,track_id")
+
+
+def test_detector_runner_can_use_alternative_class_names(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    source = tmp_path / "alternative.mp4"
+    writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"mp4v"), 5, (32, 24))
+    for _ in range(2):
+        writer.write(np.zeros((24, 32, 3), dtype=np.uint8))
+    writer.release()
+
+    def detector(role: str, frame: np.ndarray, frame_index: int, timestamp: float) -> list[Detection]:
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        mask[5:12, 6:14] = 1
+        name = "operator" if role == "health" else "needle"
+        return [Detection(0, name, 0.9, 1, mask, frame_index, timestamp, (6, 5, 14, 12))]
+
+    config = replace(load_config(tmp_path), output_dir=tmp_path / "alt-output", depth_enabled=False, health_class_name="operator", instrument_display_names={"needle": "needle"})
+    result = AnalysisPipeline(tmp_path, config, detector).run(source)
+    summary = json.loads((result.run_dir / "analysis.json").read_text(encoding="utf-8"))
+    assert summary["models"]["health_person_class_name"] == "operator"
+    with (result.run_dir / "detections.csv").open(encoding="utf-8", newline="") as handle:
+        assert any(row["class_name"] == "needle" for row in csv.DictReader(handle))
 
 
 def test_cancelled_mock_pipeline_has_manifest_but_no_final_video(tmp_path: Path) -> None:

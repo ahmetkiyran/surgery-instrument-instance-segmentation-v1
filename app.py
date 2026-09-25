@@ -10,11 +10,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import gradio as gr
+import cv2
 
 from surgical_pipeline.config import load_config
 from surgical_pipeline.doctor import run_doctor
 from surgical_pipeline.model_manager import ModelManager, ModelManagerError
 from surgical_pipeline.pipeline import AnalysisCancelled, AnalysisPipeline
+from surgical_pipeline.unified import SelectionEvent
 
 ROOT = Path(__file__).resolve().parent
 RUN_LOCK = threading.Lock()
@@ -90,7 +92,7 @@ def _trajectory_iframe(path: Path) -> str:
     return f"<iframe title='Göreli 3B yörüngeler' srcdoc=\"{content}\" style='width:100%;height:620px;border:0;border-radius:10px'></iframe>"
 
 
-def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, tracker: str, depth_stride: int, depth_enabled: bool, progress=gr.Progress(track_tqdm=False)):
+def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, tracker: str, depth_stride: int, depth_enabled: bool, render_mode: str = "legacy", enable_sam3: bool = False, enable_xray: bool = False, selection_events: str = "[]", progress=gr.Progress(track_tqdm=False)):
     if not video:
         raise gr.Error("Lütfen önce bir video seçin.")
     if not RUN_LOCK.acquire(blocking=False):
@@ -115,7 +117,27 @@ def analyse(video: str | None, blur_kernel: int, confidence: float, iou: float, 
         ).validate()
         def update(current: int, total: int, eta: float, stage: str) -> None:
             progress((current, max(total, 1)), desc=f"{stage} — {current}/{total}, yaklaşık {eta:.0f} sn kaldı")
-        result = AnalysisPipeline(ROOT, config).run(Path(video), progress=update, cancel_event=CANCEL_EVENT)
+        if render_mode == "legacy":
+            result = AnalysisPipeline(ROOT, config).run(Path(video), progress=update, cancel_event=CANCEL_EVENT)
+        else:
+            from surgical_pipeline.unified import SelectionEvent, UnifiedAnalysisPipeline
+            try:
+                values = json.loads(selection_events or "[]")
+                events = [SelectionEvent.from_dict(item) for item in values if isinstance(item, dict)]
+            except (TypeError, ValueError) as error:
+                raise gr.Error("SelectionEvent JSON geçerli bir liste olmalıdır.") from error
+            result = UnifiedAnalysisPipeline(ROOT, config).run(
+                Path(video), ROOT / "outputs" / f"unified_{int(threading.get_ident())}",
+                config.health_model_path or ROOT / "models" / "weights" / "health_personnel_segmentation.pt",
+                config.instrument_model_path or ROOT / "models" / "weights" / "surgical_instrument_segmentation.pt",
+                config.pose_model_path or ROOT / "yolo11m-pose.pt", render_mode=render_mode,
+                enable_sam3=enable_sam3, enable_xray_skeleton=enable_xray, selection_events=events,
+                progress=update, cancel_event=CANCEL_EVENT,
+            )
+            files = [str(path) for path in result.artifacts if path.is_file()]
+            preview = result.run_dir / ("sam3_inspection.mp4" if render_mode == "inspection" else "processed_video_xray_sam3.mp4")
+            yield _status_html("completed"), "✅ Birleşik analiz tamamlandı.", str(preview) if preview.is_file() else None, "<div class='summary'>Inspection çıktısı gerçek video, X-ray çıktısı sentetik geometri içerir.</div>", None, None, None, "", files
+            return
         file_map = {path.name: path for path in result.files}
         files = [str(path) for path in result.files if path.is_file()]
         yield _status_html("finalizing"), "📦 Raporlar ve indirme paketi hazırlanıyor.", *unchanged
@@ -144,6 +166,61 @@ def cancel() -> str:
     return "İptal isteği gönderildi; mevcut kare güvenli biçimde tamamlandıktan sonra analiz duracak."
 
 
+def clean_preview(video: str | None, frame_index: int = 0):
+    """Return a source frame only; this intentionally has no automatic overlay."""
+    if not video:
+        return None
+    capture = cv2.VideoCapture(str(video))
+    try:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(frame_index)))
+        ok, frame = capture.read()
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if ok else None
+    finally:
+        capture.release()
+
+
+def preview_metadata(video: str | None):
+    """Return a metadata-bounded frame control instead of a fixed 0-1000 range."""
+    if not video:
+        return gr.update(maximum=1, value=0), None
+    capture = cv2.VideoCapture(str(video))
+    try:
+        frame_count = max(1, int(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
+    finally:
+        capture.release()
+    return gr.update(maximum=frame_count - 1, value=0), clean_preview(video, 0)
+
+
+def select_preview(video: str | None, frame_index: int, events: list[dict], data: gr.SelectData):
+    """Record a prompt immediately; propagation runs once when analysis starts."""
+    if not video or not data.index:
+        raise gr.Error("Önce video seçin ve preview karesine tıklayın.")
+    frame = clean_preview(video, frame_index)
+    if frame is None:
+        raise gr.Error("Preview karesi okunamadı.")
+    height, width = frame.shape[:2]
+    x, y = data.index
+    capture = cv2.VideoCapture(str(video))
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    finally:
+        capture.release()
+    event = SelectionEvent(x / max(width - 1, 1), y / max(height - 1, 1), int(frame_index), int(frame_index) / fps if fps > 0 else 0.0, width, height, displayed_width=width, displayed_height=height, created_frame_index=int(frame_index))
+    combined = [SelectionEvent.from_dict(item) for item in events] + [event]
+    event.sam3_track_id = max((int(item.get("sam3_track_id", 0)) for item in events if isinstance(item, dict)), default=0) + 1
+    event.unified_track_id = f"u-sam3-{event.sam3_track_id}"
+    preview = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    x_pixel, y_pixel = event.pixel(width, height)
+    cv2.circle(preview, (x_pixel, y_pixel), 10, (72, 232, 255), 2, cv2.LINE_AA)
+    cv2.line(preview, (x_pixel - 15, y_pixel), (x_pixel + 15, y_pixel), (72, 232, 255), 1, cv2.LINE_AA)
+    cv2.line(preview, (x_pixel, y_pixel - 15), (x_pixel, y_pixel + 15), (72, 232, 255), 1, cv2.LINE_AA)
+    cv2.putText(preview, event.unified_track_id, (x_pixel + 12, max(18, y_pixel - 10)), cv2.FONT_HERSHEY_SIMPLEX, .5, (72, 232, 255), 1, cv2.LINE_AA)
+    preview = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
+    values = [item.__dict__ if hasattr(item, "__dict__") else {name: getattr(item, name) for name in item.__dataclass_fields__} for item in combined]
+    labels = "\n".join(f"- {item['unified_track_id']} · SAM3 {item['sam3_track_id']}" for item in values)
+    return preview, values, json.dumps(values, ensure_ascii=False, indent=2), labels
+
+
 CSS = """
 body, .gradio-container {background:#050b17 !important; color:#e8fbff !important}
 .gradio-container {max-width:1450px !important;--body-text-color:#e8fbff;--block-label-text-color:#bce7ed;--block-title-text-color:#e8fbff;--input-text-color:#102131}
@@ -167,6 +244,10 @@ def build_app() -> gr.Blocks:
         with gr.Row():
             with gr.Column(scale=2):
                 video = gr.Video(label="İncelenecek cerrahi video", sources=["upload"])
+                frame_index = gr.Slider(0, 1000, value=0, step=1, label="Preview frame (temiz görüntü)")
+                frame_preview = gr.Image(label="Temiz preview — hedef seçmek için görüntüye tıklayın", type="numpy", interactive=True)
+                selected_state = gr.State([])
+                selected_targets = gr.Markdown("Henüz hedef seçilmedi; preview temiz gösterilir.")
                 start = gr.Button("Analizi Başlat", variant="primary", size="lg")
                 stop = gr.Button("İptal Et", variant="stop")
                 message = gr.Markdown("Video seçin ve analizi başlatın.")
@@ -177,6 +258,10 @@ def build_app() -> gr.Blocks:
                 tracker = gr.Dropdown(["botsort", "bytetrack"], value="botsort", label="Tracker")
                 depth_stride = gr.Slider(1, 12, value=3, step=1, label="Depth stride")
                 depth_enabled = gr.Checkbox(value=True, label="Göreli 3B tracking etkin")
+                render_mode = gr.Dropdown(["legacy", "inspection", "privacy-xray", "dual"], value="dual", label="Render modu")
+                enable_sam3 = gr.Checkbox(value=True, label="SAM3 etkin (seçim JSON'u gerekir)")
+                enable_xray = gr.Checkbox(value=True, label="Synthetic security X-ray etkin")
+                selection_events = gr.Textbox(value="[]", label="Seçim olayları (otomatik oluşturulur)", lines=3, interactive=False)
         with gr.Tabs():
             with gr.Tab("İşlenmiş video"):
                 output_video = gr.Video(label="Kimliksizleştirilmiş çıktı")
@@ -192,7 +277,11 @@ def build_app() -> gr.Blocks:
                 trajectory = gr.HTML()
             with gr.Tab("Dosyaları indir"):
                 downloads = gr.File(label="Tekil dosyalar ve results.zip", file_count="multiple")
-        start.click(analyse, [video, blur, confidence, iou, tracker, depth_stride, depth_enabled], [status_animation, message, output_video, summary, usage_chart, health_chart, motion_chart, trajectory, downloads])
+        video.change(preview_metadata, [video], [frame_index, frame_preview])
+        video.change(clean_preview, [video, frame_index], frame_preview)
+        frame_index.change(clean_preview, [video, frame_index], frame_preview)
+        frame_preview.select(select_preview, [video, frame_index, selected_state], [frame_preview, selected_state, selection_events, selected_targets])
+        start.click(analyse, [video, blur, confidence, iou, tracker, depth_stride, depth_enabled, render_mode, enable_sam3, enable_xray, selection_events], [status_animation, message, output_video, summary, usage_chart, health_chart, motion_chart, trajectory, downloads])
         stop.click(cancel, outputs=message)
         download_button.click(download_models, outputs=[status_animation, model_status])
     return demo.queue(default_concurrency_limit=1, max_size=4)

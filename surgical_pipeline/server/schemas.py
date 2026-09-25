@@ -9,8 +9,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-JobStatus = Literal["queued", "validating", "running", "finalizing", "completed", "failed", "cancelled"]
+JobStatus = Literal["queued", "validating", "running", "paused", "finalizing", "completed", "failed", "cancelled"]
 PrivacyMode = Literal["skeleton-only", "blur", "both"]
+RenderMode = Literal["legacy", "inspection", "privacy-xray", "dual"]
 
 
 class ArtifactResponse(BaseModel):
@@ -34,6 +35,10 @@ class JobOptions(BaseModel):
     iou: float | None = Field(default=None, gt=0, le=1)
     tracker: Literal["botsort", "bytetrack"] = "botsort"
     output_directory: str | None = Field(default=None, max_length=4096)
+    render_mode: RenderMode = "legacy"
+    enable_sam3: bool = False
+    enable_xray_skeleton: bool = False
+    selection_events: list[dict] = Field(default_factory=list)
 
     @field_validator("device")
     @classmethod
@@ -139,3 +144,41 @@ class DefaultsResponse(BaseModel):
     instrument_confidence: float
     iou: float
     tracker: Literal["botsort", "bytetrack"]
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    status: str = "created"
+    job_id: str | None = None
+    current_frame: int = Field(default=0, ge=0)
+    current_timestamp: float = Field(default=0, ge=0)
+    video_width: int | None = None
+    video_height: int | None = None
+    source_fps: float | None = Field(default=None, gt=0)
+    frame_count: int | None = Field(default=None, ge=0)
+    active_tracks: list[dict] = Field(default_factory=list)
+    selected_tracks: list[str] = Field(default_factory=list)
+    preview_url: str | None = None
+    inspection_preview_url: str | None = None
+    privacy_preview_url: str | None = None
+    progress: float = Field(default=0, ge=0, le=100)
+    warnings: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class SelectionEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    normalized_x: float = Field(ge=0, le=1)
+    normalized_y: float = Field(ge=0, le=1)
+    displayed_width: int = Field(gt=0)
+    displayed_height: int = Field(gt=0)
+    source_width: int = Field(gt=0)
+    source_height: int = Field(gt=0)
+    frame_index: int = Field(ge=0)
+    timestamp: float = Field(ge=0)
+    target_category: str = Field(default="object", max_length=80)
+    action: Literal["add", "select", "remove", "pause", "resume"] = "add"
+    unified_track_id: str | None = Field(default=None, max_length=80)
+    sam3_track_id: int | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)

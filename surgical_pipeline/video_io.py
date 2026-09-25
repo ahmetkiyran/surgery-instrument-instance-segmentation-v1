@@ -144,8 +144,16 @@ class VideoWriter:
                 command += ["-i", str(source_video), "-map", "0:v:0", "-map", "1:a?", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(candidate)]
             else:
                 command += ["-map", "0:v:0", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(candidate)]
-            result = subprocess.run(command, capture_output=True, text=True, check=False)
-            if result.returncode != 0:
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=300)
+            except subprocess.TimeoutExpired as error:
+                if self.temporary_path.exists():
+                    os.replace(self.temporary_path, candidate)
+                else:
+                    raise VideoError("FFmpeg çıktı dönüştürme zaman aşımına uğradı.") from error
+                warnings.append("FFmpeg H.264 mux zaman aşımına uğradı; MP4V fallback kullanıldı.")
+                result = None
+            if result is not None and result.returncode != 0:
                 os.replace(self.temporary_path, candidate)
                 warnings.append("FFmpeg H.264 mux başarısız oldu; MP4V fallback üretildi. Ayrıntı pipeline.log dosyasındadır.")
             elif self.temporary_path.exists():

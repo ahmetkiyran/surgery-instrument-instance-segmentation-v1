@@ -131,14 +131,14 @@ def test_config_and_environment_precedence(cli_project: Path, monkeypatch: pytes
     configured = load_config(cli_project, config_path=custom)
     assert configured.output_dir == Path("config-output")
     assert configured.device == "cpu"
-    assert configured.health_model_path == Path("config-health.pt")
+    assert configured.health_model_path == (cli_project / "config-health.pt").resolve()
     overridden = load_config(cli_project, {"runtime": {"output_dir": "cli-output"}, "model": {"health_model_path": "cli-health.pt"}}, custom)
     assert overridden.output_dir == Path("cli-output")
-    assert overridden.health_model_path == Path("cli-health.pt")
+    assert overridden.health_model_path == (cli_project / "cli-health.pt").resolve()
     custom.unlink()
     environment = load_config(cli_project)
     assert environment.output_dir == Path("environment-output")
-    assert environment.health_model_path == Path("environment-health.pt")
+    assert environment.health_model_path == (cli_project / "environment-health.pt").resolve()
 
 
 def test_source_cannot_be_output_target(cli_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,6 +177,12 @@ def test_doctor_result_and_ascii_fallback(cli_project: Path, monkeypatch: pytest
     assert cli.main(["doctor", "--privacy-mode", "blur"]) == 4
     assert print_doctor([Check("warn", False, "optional", "warning")], ascii_only=True) == 0
     assert "[WARN]" in capsys.readouterr().out
+
+
+def test_legacy_doctor_json_is_machine_readable(cli_project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cli, "run_doctor", lambda *_args, **_kwargs: [])
+    assert cli.main(["doctor", "--json", "--privacy-mode", "blur"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ready"
 
 
 def test_console_script_and_module_help_subprocess() -> None:

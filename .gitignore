@@ -9,9 +9,44 @@
 *.mkv
 *.webm
 *.m4v
+*.chunk
+*.pt
 .env
+*.pem
+*.key
+*.secret
+.env.*
+!.env.example
 outputs/
 release_assets/
+audit/
+*_audit/
+audit_reports/
+security_reports/
+v1_pre_release_audit/
+audit_summary.md
+audit_summary.json
+security_findings.json
+test_matrix.json
+environment_before.json
+environment_after.json
+git_status_before.txt
+git_status_after.txt
+dependency_audit.txt
+privacy_audit.json
+architecture_findings.json
+pipeline_generality_test.json
+sam3_environment_before.txt
+sam3_environment_after.txt
+doctor_legacy.json
+doctor_sam3.json
+npm_audit.json
+*.part
+*.cache
+sam3_cache/
+.sam3/
+models/cache/
+gpu_dumps/
 runs/
 cache/
 __pycache__/
@@ -35,7 +70,8 @@ node_modules/
 *.zip
 .DS_Store
 
-# The following two verified weights are explicitly authorised by the repository owner for public distribution.
+# These verified weights are explicitly authorised by the repository owner for public distribution.
 !models/weights/
 !models/weights/health_personnel_segmentation.pt
 !models/weights/surgical_instrument_segmentation.pt
+!yolo11m-pose.pt

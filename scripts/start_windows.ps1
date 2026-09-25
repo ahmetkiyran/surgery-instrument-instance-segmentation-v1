@@ -10,10 +10,9 @@ if (-not (Test-Path $VenvPython)) {
 }
 Push-Location $Root
 try {
-    if (-not (Test-Path (Join-Path $Root '.env'))) {
-        & $VenvPython -m surgical_pipeline models download
-        if ($LASTEXITCODE -ne 0) { throw 'Release modelleri indirilemedi. README içindeki manuel/offline kurulumu izleyin.' }
-    }
+    if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { throw 'FFmpeg/FFprobe PATH üzerinde bulunamadı; önce FFmpeg kurun.' }
+    & $VenvPython -m surgical_pipeline models verify
+    if ($LASTEXITCODE -ne 0) { throw 'Modeller eksik veya doğrulanamadı. README içindeki model kurulum talimatlarını izleyin.' }
     & $VenvPython -m surgical_pipeline doctor
     if ($LASTEXITCODE -ne 0) { throw 'Ön kontrol başarısız. Yukarıdaki [FAIL] satırlarını düzeltin.' }
     & $VenvPython app.py

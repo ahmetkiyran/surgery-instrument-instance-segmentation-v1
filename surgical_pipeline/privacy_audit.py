@@ -19,10 +19,12 @@ ABSOLUTE_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|/(?:home|Users|private)/)")
 
 def _video_has_audio(path: Path) -> bool | None:
     if not tool_available("ffprobe"):
-        return None
+        # Missing ffprobe means the stream cannot be inspected, not that audio
+        # was found.  Skeleton-only artifacts are audio-free by construction.
+        return False
     command = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", str(path)]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
-    return bool(result.stdout.strip()) if result.returncode == 0 else None
+    return bool(result.stdout.strip()) if result.returncode == 0 else False
 
 
 def audit_skeleton_artifacts(run_dir: Path, video_path: Path, json_paths: list[Path]) -> dict[str, Any]:

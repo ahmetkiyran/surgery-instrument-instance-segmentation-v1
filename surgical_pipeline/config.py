@@ -87,6 +87,8 @@ class AppConfig:
             raise ValueError("Depth stride ve doğrulama karesi en az 1 olmalıdır.")
         if self.max_gap_seconds < 0 or self.minimum_interval_seconds < 0 or self.max_lost_seconds < 0:
             raise ValueError("Zaman boşlukları negatif olamaz.")
+        if self.max_video_seconds is not None and self.max_video_seconds <= 0:
+            raise ValueError("max_video_seconds pozitif olmalıdır.")
         if self.image_size is not None and self.image_size < 32:
             raise ValueError("Görüntü boyutu en az 32 olmalıdır.")
         if self.output_codec.casefold() not in {"mp4v", "avc1", "h264"}:
@@ -113,7 +115,7 @@ class AppConfig:
             "tracking": {"algorithm": self.tracker_algorithm, "confidence": self.confidence, "iou": self.iou, "track_buffer": self.track_buffer, "min_confirm_frames": self.min_confirm_frames, "max_lost_seconds": self.max_lost_seconds},
             "analytics": {"max_gap_seconds": self.max_gap_seconds, "minimum_interval_seconds": self.minimum_interval_seconds, "smoothing_window": self.smoothing_window, "max_relative_jump": self.max_relative_jump},
             "depth": {"enabled": self.depth_enabled, "model_id": self.depth_model_id, "depth_stride": self.depth_stride, "device": self.depth_device},
-            "model": {"health_class_name": self.health_class_name, "health_class_id": self.health_class_id, "image_size": self.image_size, "fp16": self.fp16, "allow_cpu_fallback": self.allow_cpu_fallback},
+            "model": {"health_class_name": self.health_class_name, "health_class_id": self.health_class_id, "instrument_display_names": self.instrument_display_names, "image_size": self.image_size, "fp16": self.fp16, "allow_cpu_fallback": self.allow_cpu_fallback},
             "cli": {"privacy_mode": self.cli_privacy_mode},
             "reproducibility": {"random_seed": self.random_seed, "log_level": self.log_level, "output_codec": self.output_codec},
             "camera": self.camera,
@@ -160,10 +162,11 @@ def _environment_values(root: Path) -> dict[str, str]:
     return values
 
 
-def _optional_path(value: Any) -> Path | None:
+def _optional_path(value: Any, root: Path) -> Path | None:
     if value is None or not str(value).strip():
         return None
-    return Path(str(value)).expanduser()
+    candidate = Path(str(value)).expanduser()
+    return candidate if candidate.is_absolute() else (root / candidate).resolve()
 
 
 def load_config(project_root: Path | None = None, overrides: dict[str, Any] | None = None, config_path: Path | None = None) -> AppConfig:
@@ -191,7 +194,9 @@ def load_config(project_root: Path | None = None, overrides: dict[str, Any] | No
     reproducibility = data.get("reproducibility", {})
     health = tracking.get("health", {})
     instrument = tracking.get("instrument", {})
-    names = _read_yaml(root / "configs" / "instrument_names.yaml").get("instrument_display_names", {})
+    default_names = _read_yaml(root / "configs" / "instrument_names.yaml").get("instrument_display_names", {})
+    configured_names = model.get("instrument_display_names", data.get("instrument_display_names", default_names))
+    names = configured_names if isinstance(configured_names, dict) else default_names
     config = AppConfig(
         output_dir=Path(_source_value(default_data, file_data, active_overrides, "runtime", "output_dir", env, "SURGICAL_OUTPUT_DIR", "outputs")),
         device=str(_source_value(default_data, file_data, active_overrides, "runtime", "device", env, "SURGICAL_DEVICE", "auto")), save_audio=bool(runtime.get("save_audio", True)), max_video_seconds=runtime.get("max_video_seconds"),
@@ -201,9 +206,9 @@ def load_config(project_root: Path | None = None, overrides: dict[str, Any] | No
         depth_enabled=bool(depth.get("enabled", True)), depth_model_id=str(depth.get("model_id", "depth-anything/Depth-Anything-V2-Small-hf")), depth_stride=int(depth.get("depth_stride", depth.get("depth_interval", 3))), depth_device=str(depth.get("device", "auto")),
         fp16=bool(model.get("fp16", True)), image_size=model.get("image_size"), random_seed=reproducibility.get("random_seed", 0), log_level=str(reproducibility.get("log_level", "INFO")), output_codec=str(reproducibility.get("output_codec", "mp4v")), allow_cpu_fallback=bool(model.get("allow_cpu_fallback", False)), health_class_name=model.get("health_class_name"), health_class_id=model.get("health_class_id"),
         camera=data.get("camera", {}),
-        health_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "health_model_path", env, "HEALTH_MODEL_PATH", None)),
-        instrument_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "instrument_model_path", env, "INSTRUMENT_MODEL_PATH", None)),
-        pose_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "pose_model_path", env, "POSE_MODEL_PATH", None)),
+        health_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "health_model_path", env, "HEALTH_MODEL_PATH", None), root),
+        instrument_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "instrument_model_path", env, "INSTRUMENT_MODEL_PATH", None), root),
+        pose_model_path=_optional_path(_source_value(default_data, file_data, active_overrides, "model", "pose_model_path", env, "POSE_MODEL_PATH", None), root),
         cli_privacy_mode=str(cli.get("privacy_mode", "skeleton-only")),
         instrument_display_names={str(k): str(v) for k, v in names.items()},
     )

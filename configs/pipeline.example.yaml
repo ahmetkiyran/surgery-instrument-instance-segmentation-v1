@@ -1,0 +1,22 @@
+# Generic pipeline example. Paths are relative to the repository root unless absolute.
+runtime:
+  output_dir: outputs/example_pipeline
+  device: auto
+  save_audio: false
+  max_video_seconds: null
+model:
+  health_model_path: models/weights/health_personnel_segmentation.pt
+  instrument_model_path: models/weights/surgical_instrument_segmentation.pt
+  pose_model_path: yolo11m-pose.pt
+  health_class_name: health_personel
+  instrument_display_names:
+    scissors: scissors
+    needle: needle
+tracking:
+  algorithm: botsort
+privacy:
+  mode: gaussian
+depth:
+  enabled: false
+cli:
+  privacy_mode: skeleton-only
