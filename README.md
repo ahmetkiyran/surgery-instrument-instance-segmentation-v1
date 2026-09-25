@@ -197,7 +197,7 @@ Son yerel doğrulama:
 
 | Kontrol | Sonuç |
 | --- | --- |
-| Python testleri | `64 passed, 1 skipped` |
+| Python testleri | `67 passed, 1 skipped, 1 warning` |
 | Atlanan test | Yetkili, yayımlanmış GitHub Release ve izinli smoke video gerektiren opt-in test |
 | Ruff | Başarılı |
 | `pip check` | Başarılı |
@@ -206,12 +206,13 @@ Son yerel doğrulama:
 | Mobile typecheck | Başarılı |
 | Desktop production/web build | Başarılı |
 | Expo Android export | Başarılı |
+| Native Tauri Cargo check | Başarılı |
 | Base/legacy doctor | Başarılı |
 | Gerçek SAM3 doctor | `ready` |
 | Gerçek SAM3/CUDA/checkpoint preflight ve ilk 60 saniye demo | Başarılı |
 | Temiz clone base kurulumu ve CLI smoke testleri | Başarılı |
 | Uzun video, klinik doğrulama | Yapılmadı |
-| Native Tauri paketleme | Cargo/Rust yoksa doğrulanmadı |
+| Native Tauri paketleme | Cargo check başarılı; paketleme/installer doğrulanmadı |
 | Fiziksel Android/iOS cihaz testi | Yapılmadı |
 
 Yerelde tekrarlamak için:
@@ -226,6 +227,7 @@ npm run typecheck:desktop
 npm run typecheck:mobile
 npm run build:desktop
 npm exec --workspace=@surgical/mobile expo export -- --platform android
+cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
 Bu sonuçlar teknik smoke/contract doğrulamasıdır; klinik performans veya üretim uygunluğu anlamına gelmez.

@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 use std::{net::TcpListener, path::PathBuf, process::{Child, Command}, sync::Mutex};
-use tauri::{Manager, State};
+use tauri::State;
 
 struct ManagedApi(Mutex<Option<Child>>);
 
